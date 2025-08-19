@@ -1,9 +1,9 @@
 import '@refinio/one.core/lib/system/load-nodejs.js';
-import { Instance, Recipes } from '@refinio/one.core';
+import { Instance, registerRecipes, getRecipe, getRecipes } from '@refinio/one.core';
 import { ErrorCode } from '../types';
 
 export interface RecipeRegisterRequest {
-  recipe: any;  // Recipe object defining data structure
+  recipe: any;  // Recipe object (which is itself structured by a Recipe recipe)
 }
 
 export interface RecipeGetRequest {
@@ -11,13 +11,17 @@ export interface RecipeGetRequest {
 }
 
 export interface RecipeListRequest {
-  category?: string;
+  recipeType?: string;  // Filter by the recipe's $type$ (what Recipe defines this recipe)
 }
 
 /**
- * Handler for Recipe operations.
- * Recipes are data structure definitions (schemas) for ONE objects,
- * not executable functions.
+ * Handler for Recipe operations in ONE platform.
+ * 
+ * In ONE, recipes are self-describing:
+ * - Recipes define the structure of ONE objects
+ * - Recipes themselves are ONE objects
+ * - Therefore, recipes are defined by Recipe recipes
+ * - The "Recipe" recipe defines what a recipe looks like
  */
 export class RecipeHandler {
   private instance: Instance | null = null;
@@ -27,8 +31,8 @@ export class RecipeHandler {
   }
 
   /**
-   * Register a new recipe (data structure definition)
-   * Recipes define the schema for ONE objects
+   * Register a new recipe with the Instance
+   * The recipe itself must conform to a Recipe recipe structure
    */
   async register(request: RecipeRegisterRequest): Promise<any> {
     if (!this.instance) {
@@ -37,13 +41,14 @@ export class RecipeHandler {
 
     try {
       // Register the recipe with the Instance
-      // This defines a new data structure that objects can use
-      await this.instance.registerRecipe(request.recipe);
+      // The recipe being registered is itself a ONE object that follows a Recipe recipe
+      await registerRecipes([request.recipe]);
       
       return {
         success: true,
         message: 'Recipe registered successfully',
-        recipeName: request.recipe.name
+        recipeName: request.recipe.$type$,
+        recipeType: request.recipe.$recipe$ || 'Recipe'  // What Recipe recipe defines this
       };
     } catch (error: any) {
       throw {
@@ -54,8 +59,7 @@ export class RecipeHandler {
   }
 
   /**
-   * Get a recipe definition by name
-   * Returns the data structure schema
+   * Get a recipe by its type name
    */
   async get(request: RecipeGetRequest): Promise<any> {
     if (!this.instance) {
@@ -63,8 +67,8 @@ export class RecipeHandler {
     }
 
     try {
-      // Get recipe from Instance's registered recipes
-      const recipe = await this.instance.getRecipe(request.name);
+      // Get the recipe from registered recipes
+      const recipe = getRecipe(request.name);
       
       if (!recipe) {
         throw {
@@ -75,7 +79,11 @@ export class RecipeHandler {
 
       return {
         success: true,
-        recipe
+        recipe: {
+          $type$: recipe.$type$,
+          $recipe$: recipe.$recipe$ || 'Recipe',
+          ...recipe
+        }
       };
     } catch (error: any) {
       if (error.code === ErrorCode.NOT_FOUND) {
@@ -90,8 +98,10 @@ export class RecipeHandler {
   }
 
   /**
-   * List all registered recipes
-   * Returns all available data structure definitions
+   * List all registered recipes, optionally filtered by their recipe type
+   * 
+   * @param recipeType - Filter by what Recipe recipe defines these recipes
+   *                     For example, "MessageRecipe" to get all recipes defined by MessageRecipe
    */
   async list(request: RecipeListRequest): Promise<any> {
     if (!this.instance) {
@@ -99,23 +109,26 @@ export class RecipeHandler {
     }
 
     try {
-      // Get all recipes from Instance
-      const allRecipes = await this.instance.getAllRecipes();
+      // Get all registered recipes
+      const allRecipes = getRecipes();
       
-      // Filter by category if provided
-      const filtered = request.category
-        ? allRecipes.filter((r: any) => r.category === request.category)
+      // Filter by recipe type if provided
+      // This filters by what Recipe recipe defines each recipe
+      const filtered = request.recipeType
+        ? allRecipes.filter((r: any) => {
+            // Check if this recipe is defined by the specified recipe type
+            return r.$recipe$ === request.recipeType;
+          })
         : allRecipes;
       
       return {
         success: true,
         count: filtered.length,
         recipes: filtered.map((r: any) => ({
-          name: r.name,
-          type: r.type,
+          $type$: r.$type$,           // The name/type of this recipe
+          $recipe$: r.$recipe$ || 'Recipe',  // What Recipe recipe defines this recipe
           description: r.description,
-          category: r.category,
-          properties: r.properties  // The actual data structure definition
+          properties: r.properties
         }))
       };
     } catch (error: any) {
@@ -127,59 +140,65 @@ export class RecipeHandler {
   }
 
   /**
-   * Get example recipes showing common data structures
-   * These are examples of how recipes define object schemas
+   * Get the standard ONE platform recipes
+   * These show the hierarchical nature of recipes
    */
-  getExampleRecipes(): any[] {
+  getStandardRecipes(): any[] {
     return [
       {
-        name: 'Person',
-        type: 'Person',
-        category: 'identity',
-        description: 'Data structure for a Person object',
+        $type$: 'Recipe',
+        $recipe$: 'Recipe',  // Recipe is defined by itself
+        description: 'The meta-recipe that defines what a recipe is',
         properties: {
-          name: { type: 'string', required: true },
+          $type$: { type: 'string', required: true },
+          $recipe$: { type: 'string', required: false },
+          properties: { type: 'object', required: true }
+        }
+      },
+      {
+        $type$: 'Person',
+        $recipe$: 'Recipe',  // Person is defined by the Recipe recipe
+        description: 'A person in the ONE system',
+        properties: {
+          $type$: { type: 'const', value: 'Person' },
+          name: { type: 'string' },
           email: { type: 'string', format: 'email' },
-          publicKey: { type: 'string', required: true },
-          birthDate: { type: 'date' }
+          publicKey: { type: 'string', required: true }
         }
       },
       {
-        name: 'Profile',
-        type: 'Profile', 
-        category: 'identity',
-        description: 'Data structure for a user Profile',
+        $type$: 'Profile',
+        $recipe$: 'Recipe',  // Profile is defined by the Recipe recipe
+        description: 'A user profile',
         properties: {
-          personId: { type: 'reference', refType: 'Person', required: true },
+          $type$: { type: 'const', value: 'Profile' },
+          personId: { type: 'SHA256Hash', required: true },
           displayName: { type: 'string', required: true },
-          avatar: { type: 'string', format: 'dataUri' },
-          bio: { type: 'string', maxLength: 500 }
+          avatar: { type: 'string', format: 'dataUri' }
         }
       },
       {
-        name: 'Message',
-        type: 'Message',
-        category: 'communication',
-        description: 'Data structure for a Message',
+        $type$: 'MessageRecipe',
+        $recipe$: 'Recipe',  // MessageRecipe is itself a Recipe
+        description: 'Recipe for defining message types',
         properties: {
-          channelId: { type: 'reference', refType: 'Channel', required: true },
-          senderId: { type: 'reference', refType: 'Person', required: true },
+          $type$: { type: 'string', required: true },
+          $recipe$: { type: 'const', value: 'MessageRecipe' },
+          contentType: { type: 'string', required: true },
+          maxLength: { type: 'number' }
+        }
+      },
+      {
+        $type$: 'TextMessage',
+        $recipe$: 'MessageRecipe',  // TextMessage is defined by MessageRecipe
+        description: 'A text message',
+        properties: {
+          $type$: { type: 'const', value: 'TextMessage' },
           content: { type: 'string', required: true },
-          timestamp: { type: 'timestamp', required: true },
-          metadata: { type: 'object' }
-        }
-      },
-      {
-        name: 'Channel',
-        type: 'Channel',
-        category: 'communication',
-        description: 'Data structure for a communication Channel',
-        properties: {
-          name: { type: 'string', required: true },
-          channelType: { type: 'enum', values: ['direct', 'group'], required: true },
-          participants: { type: 'array', items: { type: 'reference', refType: 'Person' } },
-          createdAt: { type: 'timestamp', required: true }
-        }
+          timestamp: { type: 'number', required: true }
+        },
+        contentType: 'text/plain',
+        maxLength: 1000
       }
     ];
   }

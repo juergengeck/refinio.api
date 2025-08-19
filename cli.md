@@ -79,8 +79,9 @@ sequenceDiagram
     Note over CLI,API: Session established with permissions
 ```
 
-## Understanding Recipes
+## Understanding Core Concepts
 
+### Recipes
 In the ONE platform, **recipes are data structure definitions** (schemas), not executable code. They define:
 - The shape and structure of ONE objects
 - Field types and validation rules
@@ -88,6 +89,37 @@ In the ONE platform, **recipes are data structure definitions** (schemas), not e
 - Required and optional properties
 
 Think of recipes like database schemas or TypeScript interfaces - they describe data, they don't execute operations.
+
+#### Hierarchical Recipe System
+ONE uses a self-describing recipe system:
+- **Recipes are ONE objects themselves**
+- Every recipe has a `$type$` field (its name)
+- Every recipe has a `$recipe$` field (what Recipe defines it)
+- The base "Recipe" recipe defines itself (`$recipe$: "Recipe"`)
+- Specialized recipes can define other recipes (e.g., `MessageRecipe` defines message types)
+
+Example hierarchy:
+```
+Recipe (defines itself)
+├── Person (defined by Recipe)
+├── Profile (defined by Recipe)
+├── MessageRecipe (defined by Recipe)
+│   ├── TextMessage (defined by MessageRecipe)
+│   └── ImageMessage (defined by MessageRecipe)
+└── DocumentRecipe (defined by Recipe)
+    ├── Article (defined by DocumentRecipe)
+    └── Report (defined by DocumentRecipe)
+```
+
+### Profiles
+**Profiles are ONE objects** stored in the instance that represent user contexts with:
+- Unique alias for quick access
+- Person ID association
+- Display name and description
+- Permissions and settings
+- Metadata like creation time and last used
+
+Profiles enable multi-user and multi-context access to ONE instances.
 
 ## API Operations
 
@@ -129,9 +161,8 @@ refinio recipe register --file recipe.json
 Example recipe definition:
 ```json
 {
-  "name": "CustomMessage",
-  "type": "CustomMessage",
-  "category": "communication",
+  "$type$": "CustomMessage",
+  "$recipe$": "Recipe",
   "description": "Custom message data structure",
   "properties": {
     "sender": { "type": "reference", "refType": "Person", "required": true },
@@ -147,8 +178,8 @@ Example recipe definition:
 # List all registered data structures
 refinio recipe list
 
-# Filter by category
-refinio recipe list --category communication
+# Filter by recipe type (what Recipe defines these recipes)
+refinio recipe list --type MessageRecipe
 ```
 
 #### Get Recipe Definition
@@ -351,17 +382,29 @@ npm run test:load
 
 ## CLI Usage Examples
 
+### Getting Started
+
+```bash
+# Connect to a ONE instance (first time)
+refinio connect quic://instance.example.com:49498 --email alice@example.com
+
+# Create a profile (stored as ONE object in instance)
+refinio profile create dev --name "Development Profile"
+
+# List available profiles
+refinio profile list
+
+# Set default profile
+refinio profile use dev
+```
+
 ### Basic Operations
 
 ```bash
-# Generate Person keys (first time)
-refinio auth generate alice@example.com
-
-# Authenticate
-refinio auth login --keys ~/.refinio/keys.json
-
 # Create a new object (using a registered recipe structure)
 refinio create Person --data person.json
+# Or with specific profile:
+refinio dev create Person --data person.json
 
 # Get an object
 refinio get abc123def456
@@ -376,11 +419,34 @@ refinio delete abc123def456
 refinio list Person --filter "name=John*"
 ```
 
+### Profile Management
+
+```bash
+# Create a new profile in the instance
+refinio profile create fritz --name "Fritz Instance" --description "Production environment"
+
+# List all profiles in the instance
+refinio profile list
+
+# Show profile details
+refinio profile show fritz
+
+# Update profile
+refinio profile update fritz --name "Fritz Production" --tags "prod,main"
+
+# Delete profile
+refinio profile delete fritz
+
+# Use profile shortcut for any command
+refinio fritz recipe list
+refinio fritz get <object-id>
+```
+
 ### Recipe Management (Data Structures)
 
 ```bash
 # Register a new data structure (admin only)
-refinio recipe register --file my-recipe.json
+refinio recipe register --file my-recipe.json --profile admin
 
 # List all data structures
 refinio recipe list
@@ -388,15 +454,29 @@ refinio recipe list
 # Get a specific data structure definition
 refinio recipe get Profile
 
-# List data structures by category
-refinio recipe list --category identity
+# List recipes defined by a specific Recipe type
+refinio recipe list --type ProfileRecipe
+```
+
+### Instance Management
+
+```bash
+# Connect to multiple instances
+refinio connect quic://dev.example.com:49498 --keys ~/keys/dev.json
+refinio connect quic://prod.example.com:49498 --keys ~/keys/prod.json
+
+# List connected instances
+refinio instances
+
+# Disconnect from an instance
+refinio disconnect quic://dev.example.com:49498
 ```
 
 ### Real-time Monitoring
 
 ```bash
 # Watch for changes to an object
-refinio watch abc123def456
+refinio watch abc123def456 --profile monitoring
 
 # Stream all events
 refinio stream events
