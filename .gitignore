@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+.DS_Store
+instance/
+.refinio/
+refinio-api.config.json
+coverage/
+*.key
+*.pem
+*.cert

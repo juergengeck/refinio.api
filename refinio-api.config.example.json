@@ -1,0 +1,20 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 49498
+  },
+  "instance": {
+    "name": "My Refinio API Server",
+    "email": "admin@example.com",
+    "secret": "CHANGE_THIS_TO_A_SECURE_PASSPHRASE",
+    "directory": "~/.refinio/instance",
+    "encryptStorage": true
+  },
+  "permissions": {
+    "defaultPermissions": ["read"],
+    "publicReadAccess": false
+  },
+  "logging": {
+    "level": "info"
+  }
+}

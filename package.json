@@ -1,0 +1,37 @@
+{
+  "name": "@juergengeck/refinio-api",
+  "version": "0.1.0",
+  "description": "Instance-based API server for ONE platform with QUICVC transport",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/juergengeck/refinio-packages.git",
+    "directory": "refinio.api"
+  },
+  "author": "Juergen Geck",
+  "license": "MIT",
+  "keywords": ["refinio", "one-platform", "api", "quic", "instance"],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@refinio/one.core": "^0.6.0",
+    "@refinio/one.models": "^14.0.0"
+  },
+  "peerDependencies": {
+    "@refinio/one.core": ">=0.6.0",
+    "@refinio/one.models": ">=14.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "jest": "^29.7.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
