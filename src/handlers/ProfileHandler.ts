@@ -5,40 +5,40 @@ import {
   getObjectByHash,
   getObjectsByType,
   updateObject,
-  deleteObject,
-  SHA256Hash
+  deleteObject
 } from '@refinio/one.core';
+import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { Person } from '@refinio/one.core/lib/recipes.js';
+import type { Profile } from '@refinio/one.models/src/recipes/Leute/Profile.js';
 import { ErrorCode } from '../types';
 import crypto from 'crypto';
 
 export interface ProfileCreateRequest {
-  alias: string;
-  personId: string;
-  instanceUrl: string;
-  displayName: string;
-  description?: string;
-  settings?: any;
+  nickname: string;  // Using the official Profile nickname field
+  personId: SHA256IdHash<Person>;
+  owner: SHA256IdHash<Person>;
+  profileId?: string;  // Auto-generated if not provided
+  communicationEndpoint?: SHA256Hash<any>[];
+  personDescription?: SHA256Hash<any>[];
 }
 
 export interface ProfileUpdateRequest {
   profileId: string;
   updates: Partial<{
-    alias: string;
-    displayName: string;
-    description: string;
-    settings: any;
-    metadata: any;
+    nickname: string;
+    communicationEndpoint: SHA256Hash<any>[];
+    personDescription: SHA256Hash<any>[];
   }>;
 }
 
 export interface ProfileGetRequest {
   profileId?: string;
-  alias?: string;
+  nickname?: string;  // Search by nickname instead of alias
 }
 
 export interface ProfileListRequest {
-  personId?: string;
-  tags?: string[];
+  personId?: SHA256IdHash<Person>;
+  owner?: SHA256IdHash<Person>;
 }
 
 export class ProfileHandler {
@@ -49,39 +49,37 @@ export class ProfileHandler {
   }
 
   /**
-   * Create a new Profile
+   * Create a new Profile using the official one.models Profile structure
    */
-  async create(request: ProfileCreateRequest, personId: string): Promise<any> {
+  async create(request: ProfileCreateRequest, authPersonId: SHA256IdHash<Person>): Promise<any> {
     if (!this.instance) {
       throw new Error('Handler not initialized');
     }
 
     try {
-      // Check if alias already exists
+      // Check if nickname already exists
       const existingProfiles = await getObjectsByType('Profile');
-      const aliasExists = existingProfiles.some((p: any) => p.alias === request.alias);
+      const nicknameExists = existingProfiles.some((p: any) => p.nickname === request.nickname);
       
-      if (aliasExists) {
+      if (nicknameExists) {
         throw {
           code: ErrorCode.CONFLICT,
-          message: `Profile with alias '${request.alias}' already exists`
+          message: `Profile with nickname '${request.nickname}' already exists`
         };
       }
 
-      // Create the Profile object
-      const profile = {
+      // Generate profileId if not provided
+      const profileId = request.profileId || crypto.randomBytes(16).toString('hex');
+
+      // Create the Profile object using official one.models structure
+      const profile: Profile = {
         $type$: 'Profile',
-        alias: request.alias,
+        profileId,
         personId: request.personId,
-        instanceUrl: request.instanceUrl,
-        instanceId: this.instance.id,
-        displayName: request.displayName,
-        description: request.description,
-        metadata: {
-          createdAt: Date.now(),
-          lastModified: Date.now()
-        },
-        settings: request.settings || {}
+        owner: request.owner,
+        nickname: request.nickname,
+        communicationEndpoint: request.communicationEndpoint || [],
+        personDescription: request.personDescription || []
       };
 
       const createdProfile = await createObject(profile);
@@ -104,7 +102,7 @@ export class ProfileHandler {
   }
 
   /**
-   * Get a Profile by ID or alias
+   * Get a Profile by ID or nickname
    */
   async get(request: ProfileGetRequest): Promise<any> {
     if (!this.instance) {
@@ -115,16 +113,17 @@ export class ProfileHandler {
       let profile;
 
       if (request.profileId) {
-        // Get by ID
-        profile = await getObjectByHash(request.profileId as SHA256Hash);
-      } else if (request.alias) {
-        // Get by alias
+        // Get by profileId (find Profile with matching profileId field)
         const profiles = await getObjectsByType('Profile');
-        profile = profiles.find((p: any) => p.alias === request.alias);
+        profile = profiles.find((p: any) => p.profileId === request.profileId);
+      } else if (request.nickname) {
+        // Get by nickname
+        const profiles = await getObjectsByType('Profile');
+        profile = profiles.find((p: any) => p.nickname === request.nickname);
       } else {
         throw {
           code: ErrorCode.VALIDATION_ERROR,
-          message: 'Must provide either profileId or alias'
+          message: 'Must provide either profileId or nickname'
         };
       }
 
@@ -152,14 +151,15 @@ export class ProfileHandler {
   /**
    * Update a Profile
    */
-  async update(request: ProfileUpdateRequest, personId: string): Promise<any> {
+  async update(request: ProfileUpdateRequest, authPersonId: SHA256IdHash<Person>): Promise<any> {
     if (!this.instance) {
       throw new Error('Handler not initialized');
     }
 
     try {
-      // Get the existing profile
-      const existingProfile = await getObjectByHash(request.profileId as SHA256Hash);
+      // Find the existing profile by profileId
+      const profiles = await getObjectsByType('Profile');
+      const existingProfile = profiles.find((p: any) => p.profileId === request.profileId);
       
       if (!existingProfile) {
         throw {
@@ -168,40 +168,37 @@ export class ProfileHandler {
         };
       }
 
-      // Check ownership
-      if (existingProfile.personId !== personId && personId !== this.instance.owner.id) {
+      // Check ownership (can update if you're the owner or the personId)
+      if (existingProfile.personId !== authPersonId && existingProfile.owner !== authPersonId) {
         throw {
           code: ErrorCode.FORBIDDEN,
           message: 'Not authorized to update this profile'
         };
       }
 
-      // Check if new alias conflicts
-      if (request.updates.alias && request.updates.alias !== existingProfile.alias) {
-        const profiles = await getObjectsByType('Profile');
-        const aliasExists = profiles.some((p: any) => 
-          p.alias === request.updates.alias && p.id !== request.profileId
+      // Check if new nickname conflicts
+      if (request.updates.nickname && request.updates.nickname !== existingProfile.nickname) {
+        const nicknameExists = profiles.some((p: any) => 
+          p.nickname === request.updates.nickname && p.profileId !== request.profileId
         );
         
-        if (aliasExists) {
+        if (nicknameExists) {
           throw {
             code: ErrorCode.CONFLICT,
-            message: `Profile with alias '${request.updates.alias}' already exists`
+            message: `Profile with nickname '${request.updates.nickname}' already exists`
           };
         }
       }
 
-      // Merge updates
-      const updatedProfile = {
+      // Merge updates with existing profile
+      const updatedProfile: Profile = {
         ...existingProfile,
-        ...request.updates,
-        metadata: {
-          ...existingProfile.metadata,
-          lastModified: Date.now()
-        }
+        ...request.updates
       };
 
-      await updateObject(request.profileId as SHA256Hash, updatedProfile);
+      // Update the object (need to get the ONE object hash)
+      const objectHash = existingProfile._hash || existingProfile.id; // Assuming the hash is available
+      await updateObject(objectHash as SHA256Hash, updatedProfile);
 
       return {
         success: true,
@@ -220,14 +217,15 @@ export class ProfileHandler {
   /**
    * Delete a Profile
    */
-  async delete(profileId: string, personId: string): Promise<any> {
+  async delete(profileId: string, authPersonId: SHA256IdHash<Person>): Promise<any> {
     if (!this.instance) {
       throw new Error('Handler not initialized');
     }
 
     try {
-      // Get the profile to check ownership
-      const profile = await getObjectByHash(profileId as SHA256Hash);
+      // Find the profile to check ownership
+      const profiles = await getObjectsByType('Profile');
+      const profile = profiles.find((p: any) => p.profileId === profileId);
       
       if (!profile) {
         throw {
@@ -236,26 +234,17 @@ export class ProfileHandler {
         };
       }
 
-      // Check ownership
-      if (profile.personId !== personId && personId !== this.instance.owner.id) {
+      // Check ownership (can delete if you're the owner or the personId)
+      if (profile.personId !== authPersonId && profile.owner !== authPersonId) {
         throw {
           code: ErrorCode.FORBIDDEN,
           message: 'Not authorized to delete this profile'
         };
       }
 
-      await deleteObject(profileId as SHA256Hash);
-
-      // Also delete associated credentials if they exist
-      try {
-        const credentials = await getObjectsByType('ProfileCredential');
-        const profileCred = credentials.find((c: any) => c.profileId === profileId);
-        if (profileCred) {
-          await deleteObject(profileCred.id);
-        }
-      } catch (error) {
-        // Ignore credential deletion errors
-      }
+      // Delete the Profile object
+      const objectHash = profile._hash || profile.id;
+      await deleteObject(objectHash as SHA256Hash);
 
       return {
         success: true,
@@ -287,32 +276,29 @@ export class ProfileHandler {
         profiles = profiles.filter((p: any) => p.personId === request.personId);
       }
 
-      // Filter by tags if provided
-      if (request.tags && request.tags.length > 0) {
-        profiles = profiles.filter((p: any) => 
-          p.metadata?.tags?.some((tag: string) => request.tags!.includes(tag))
-        );
+      // Filter by owner if provided
+      if (request.owner) {
+        profiles = profiles.filter((p: any) => p.owner === request.owner);
       }
 
-      // Sort by last used, then created
+      // Sort by nickname for consistent ordering
       profiles.sort((a: any, b: any) => {
-        const aTime = a.metadata?.lastUsed || a.metadata?.createdAt || 0;
-        const bTime = b.metadata?.lastUsed || b.metadata?.createdAt || 0;
-        return bTime - aTime;
+        const aName = a.nickname || a.profileId;
+        const bName = b.nickname || b.profileId;
+        return aName.localeCompare(bName);
       });
 
       return {
         success: true,
         count: profiles.length,
         profiles: profiles.map((p: any) => ({
-          id: p.id,
-          alias: p.alias,
+          id: p.id || p._hash,  // ONE object hash
+          profileId: p.profileId,
+          nickname: p.nickname,
           personId: p.personId,
-          instanceUrl: p.instanceUrl,
-          displayName: p.displayName,
-          description: p.description,
-          lastUsed: p.metadata?.lastUsed,
-          createdAt: p.metadata?.createdAt
+          owner: p.owner,
+          communicationEndpoint: p.communicationEndpoint,
+          personDescription: p.personDescription
         }))
       };
     } catch (error: any) {
@@ -324,29 +310,18 @@ export class ProfileHandler {
   }
 
   /**
-   * Update last used timestamp
+   * Get Profile by nickname (convenience method)
    */
-  async touchProfile(profileId: string): Promise<void> {
+  async getByNickname(nickname: string): Promise<Profile | null> {
     if (!this.instance) {
       throw new Error('Handler not initialized');
     }
 
     try {
-      const profile = await getObjectByHash(profileId as SHA256Hash);
-      
-      if (profile) {
-        const updated = {
-          ...profile,
-          metadata: {
-            ...profile.metadata,
-            lastUsed: Date.now()
-          }
-        };
-        
-        await updateObject(profileId as SHA256Hash, updated);
-      }
+      const profiles = await getObjectsByType('Profile');
+      return profiles.find((p: any) => p.nickname === nickname) || null;
     } catch (error) {
-      // Silently ignore touch errors
+      return null;
     }
   }
 }

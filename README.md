@@ -76,13 +76,16 @@ The API server follows ONE platform's Instance ownership model:
 - **Cryptographic Identity**: Ed25519 signatures verify Person identity
 - **Permission Grants**: Owner can grant permissions to other Persons
 
-### Profiles as ONE Objects
+### Profiles as Official ONE Objects
 
-Profiles are stored as ONE objects in the instance:
-- Unique alias for quick identification
-- Associated with Person ID
-- Store permissions and settings
-- Enable multi-context access
+Profiles use the official one.models Profile recipe:
+- `nickname` - User-friendly identifier for CLI shortcuts
+- `profileId` - Unique profile identifier  
+- `personId` and `owner` - Person references for ownership
+- `communicationEndpoint` - Communication endpoints array
+- `personDescription` - Person description objects array
+- Stored as proper ONE objects in the instance
+- Enable multi-context access with semantic structure
 
 ### Hierarchical Recipe System
 
@@ -107,10 +110,11 @@ Example:
 ## API Handlers
 
 ### Profile Handler
-Manages Profile ONE objects:
-- Create, read, update, delete profiles
-- List profiles with filtering
-- Touch profiles to update last used
+Manages official one.models Profile objects:
+- Create, read, update, delete Profiles using official structure
+- List Profiles with personId/owner filtering
+- Search by nickname or profileId
+- Full compliance with one.models Profile recipe
 
 ### Recipe Handler
 Manages recipe definitions:

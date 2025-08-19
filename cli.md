@@ -112,14 +112,15 @@ Recipe (defines itself)
 ```
 
 ### Profiles
-**Profiles are ONE objects** stored in the instance that represent user contexts with:
-- Unique alias for quick access
-- Person ID association
-- Display name and description
-- Permissions and settings
-- Metadata like creation time and last used
+**Profiles are official ONE objects** from one.models stored in the instance that represent user contexts with:
+- `nickname` - User-friendly name for CLI shortcuts (e.g., "fritz", "dev", "prod")
+- `profileId` - Unique identifier for the profile
+- `personId` - Reference to the associated Person
+- `owner` - Reference to the Profile owner Person
+- `communicationEndpoint` - Array of communication endpoints (instances are endpoints)
+- `personDescription` - Array of person description objects
 
-Profiles enable multi-user and multi-context access to ONE instances.
+Profiles use the official one.models Profile recipe and enable multi-user, multi-context access to ONE instances.
 
 ## API Operations
 
@@ -422,22 +423,22 @@ refinio list Person --filter "name=John*"
 ### Profile Management
 
 ```bash
-# Create a new profile in the instance
-refinio profile create fritz --name "Fritz Instance" --description "Production environment"
+# Create a new Profile (official ONE object)
+refinio profile create fritz --name "Fritz Development"
 
-# List all profiles in the instance
-refinio profile list
+# List all Profiles in the instance
+refinio profile list --my  # Show only your profiles
 
-# Show profile details
+# Show Profile details (official one.models structure)
 refinio profile show fritz
 
-# Update profile
-refinio profile update fritz --name "Fritz Production" --tags "prod,main"
+# Update Profile nickname
+refinio profile update fritz --name "Fritz Production"
 
-# Delete profile
+# Delete Profile
 refinio profile delete fritz
 
-# Use profile shortcut for any command
+# Use nickname shortcuts for any command
 refinio fritz recipe list
 refinio fritz get <object-id>
 ```
