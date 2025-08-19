@@ -225,21 +225,23 @@ const { server, instance } = await startApiServer({
 console.log(`Server running with Instance owner: ${instance.owner.email}`);
 ```
 
-### With Express Integration
+### Direct ONE Platform Integration
 ```typescript
-import express from 'express';
 import { QuicVCServer } from '@juergengeck/refinio-api';
+import { createInstance } from '@refinio/one.core';
 
-const app = express();
-const quicServer = new QuicVCServer();
-
-// Add HTTP endpoints alongside QUIC
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', quic: quicServer.isRunning() });
+// Create ONE Instance with API server
+const instance = await createInstance({
+  email: 'admin@example.com',
+  secret: 'passphrase'
 });
 
+// Start QUICVC server on the instance
+const quicServer = new QuicVCServer(instance);
 await quicServer.start({ port: 49498 });
-app.listen(3000);
+
+// ONE platform handles all networking - no external frameworks needed
+console.log('API server running on ONE platform');
 ```
 
 ## Security
