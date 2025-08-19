@@ -94,8 +94,16 @@ export class QuicVCServer extends EventEmitter {
         await this.handleCrudOperation(message, clientId, connection);
         break;
         
-      case MessageType.RECIPE_EXECUTE:
-        await this.handleRecipeExecution(message, clientId, connection);
+      case MessageType.RECIPE_REGISTER:
+        await this.handleRecipeRegister(message, clientId, connection);
+        break;
+        
+      case MessageType.RECIPE_GET:
+        await this.handleRecipeGet(message, clientId, connection);
+        break;
+        
+      case MessageType.RECIPE_LIST:
+        await this.handleRecipeList(message, clientId, connection);
         break;
         
       case MessageType.STREAM_SUBSCRIBE:
@@ -244,7 +252,7 @@ export class QuicVCServer extends EventEmitter {
     }
   }
 
-  private async handleRecipeExecution(message: Message, clientId: string, connection: QuicConnection) {
+  private async handleRecipeRegister(message: Message, clientId: string, connection: QuicConnection) {
     const session = this.sessions.get(clientId);
     
     if (!session) {
@@ -252,17 +260,71 @@ export class QuicVCServer extends EventEmitter {
       return;
     }
     
-    // Most recipes require write permission
-    if (!this.options.authManager.hasPermission(session, 'write')) {
-      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'No write permission for recipes');
+    // Registering recipes requires admin permission
+    if (!this.options.authManager.hasPermission(session, 'admin')) {
+      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'Only admin can register recipes');
       return;
     }
     
     try {
-      const result = await this.options.handlers.recipe.execute(message.payload);
+      const result = await this.options.handlers.recipe.register(message.payload);
       await this.sendMessage(connection, {
         id: message.id,
-        type: MessageType.RECIPE_RESULT,
+        type: MessageType.RECIPE_RESPONSE,
+        timestamp: Date.now(),
+        payload: result
+      });
+    } catch (error: any) {
+      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
+    }
+  }
+
+  private async handleRecipeGet(message: Message, clientId: string, connection: QuicConnection) {
+    const session = this.sessions.get(clientId);
+    
+    if (!session) {
+      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
+      return;
+    }
+    
+    // Reading recipes requires read permission
+    if (!this.options.authManager.hasPermission(session, 'read')) {
+      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'No read permission');
+      return;
+    }
+    
+    try {
+      const result = await this.options.handlers.recipe.get(message.payload);
+      await this.sendMessage(connection, {
+        id: message.id,
+        type: MessageType.RECIPE_RESPONSE,
+        timestamp: Date.now(),
+        payload: result
+      });
+    } catch (error: any) {
+      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
+    }
+  }
+
+  private async handleRecipeList(message: Message, clientId: string, connection: QuicConnection) {
+    const session = this.sessions.get(clientId);
+    
+    if (!session) {
+      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
+      return;
+    }
+    
+    // Listing recipes requires read permission
+    if (!this.options.authManager.hasPermission(session, 'read')) {
+      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'No read permission');
+      return;
+    }
+    
+    try {
+      const result = await this.options.handlers.recipe.list(message.payload);
+      await this.sendMessage(connection, {
+        id: message.id,
+        type: MessageType.RECIPE_RESPONSE,
         timestamp: Date.now(),
         payload: result
       });

@@ -2,36 +2,69 @@ import '@refinio/one.core/lib/system/load-nodejs.js';
 import { Instance, Recipes } from '@refinio/one.core';
 import { ErrorCode } from '../types';
 
-export interface RecipeExecuteRequest {
+export interface RecipeRegisterRequest {
+  recipe: any;  // Recipe object defining data structure
+}
+
+export interface RecipeGetRequest {
   name: string;
-  params: any;
 }
 
 export interface RecipeListRequest {
   category?: string;
 }
 
-export interface RecipeSchemaRequest {
-  name: string;
-}
-
+/**
+ * Handler for Recipe operations.
+ * Recipes are data structure definitions (schemas) for ONE objects,
+ * not executable functions.
+ */
 export class RecipeHandler {
   private instance: Instance | null = null;
-  private recipes: typeof Recipes | null = null;
 
   async initialize(instance: Instance) {
     this.instance = instance;
-    this.recipes = Recipes;
   }
 
-  async execute(request: RecipeExecuteRequest): Promise<any> {
-    if (!this.instance || !this.recipes) {
+  /**
+   * Register a new recipe (data structure definition)
+   * Recipes define the schema for ONE objects
+   */
+  async register(request: RecipeRegisterRequest): Promise<any> {
+    if (!this.instance) {
       throw new Error('Handler not initialized');
     }
 
     try {
-      // Find recipe by name
-      const recipe = this.getRecipe(request.name);
+      // Register the recipe with the Instance
+      // This defines a new data structure that objects can use
+      await this.instance.registerRecipe(request.recipe);
+      
+      return {
+        success: true,
+        message: 'Recipe registered successfully',
+        recipeName: request.recipe.name
+      };
+    } catch (error: any) {
+      throw {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: error.message
+      };
+    }
+  }
+
+  /**
+   * Get a recipe definition by name
+   * Returns the data structure schema
+   */
+  async get(request: RecipeGetRequest): Promise<any> {
+    if (!this.instance) {
+      throw new Error('Handler not initialized');
+    }
+
+    try {
+      // Get recipe from Instance's registered recipes
+      const recipe = await this.instance.getRecipe(request.name);
       
       if (!recipe) {
         throw {
@@ -40,16 +73,12 @@ export class RecipeHandler {
         };
       }
 
-      // Execute recipe with parameters
-      const result = await recipe.execute(this.instance, request.params);
-      
       return {
         success: true,
-        recipeName: request.name,
-        result
+        recipe
       };
     } catch (error: any) {
-      if (error.code) {
+      if (error.code === ErrorCode.NOT_FOUND) {
         throw error;
       }
       
@@ -60,28 +89,33 @@ export class RecipeHandler {
     }
   }
 
+  /**
+   * List all registered recipes
+   * Returns all available data structure definitions
+   */
   async list(request: RecipeListRequest): Promise<any> {
-    if (!this.recipes) {
+    if (!this.instance) {
       throw new Error('Handler not initialized');
     }
 
     try {
-      // Get all available recipes
-      const recipeList = this.getAllRecipes();
+      // Get all recipes from Instance
+      const allRecipes = await this.instance.getAllRecipes();
       
       // Filter by category if provided
       const filtered = request.category
-        ? recipeList.filter(r => r.category === request.category)
-        : recipeList;
+        ? allRecipes.filter((r: any) => r.category === request.category)
+        : allRecipes;
       
       return {
         success: true,
         count: filtered.length,
-        recipes: filtered.map(r => ({
+        recipes: filtered.map((r: any) => ({
           name: r.name,
-          category: r.category,
+          type: r.type,
           description: r.description,
-          parameters: r.parameters
+          category: r.category,
+          properties: r.properties  // The actual data structure definition
         }))
       };
     } catch (error: any) {
@@ -92,143 +126,61 @@ export class RecipeHandler {
     }
   }
 
-  async getSchema(request: RecipeSchemaRequest): Promise<any> {
-    if (!this.recipes) {
-      throw new Error('Handler not initialized');
-    }
-
-    try {
-      const recipe = this.getRecipe(request.name);
-      
-      if (!recipe) {
-        throw {
-          code: ErrorCode.NOT_FOUND,
-          message: `Recipe '${request.name}' not found`
-        };
-      }
-
-      return {
-        success: true,
-        name: recipe.name,
-        description: recipe.description,
-        category: recipe.category,
-        parameters: recipe.parameters,
-        returns: recipe.returns,
-        examples: recipe.examples
-      };
-    } catch (error: any) {
-      if (error.code) {
-        throw error;
-      }
-      
-      throw {
-        code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
-      };
-    }
-  }
-
-  private getRecipe(name: string): any {
-    // Common ONE platform recipes
-    const recipeMap: any = {
-      // Person recipes
-      'CreatePerson': {
-        name: 'CreatePerson',
+  /**
+   * Get example recipes showing common data structures
+   * These are examples of how recipes define object schemas
+   */
+  getExampleRecipes(): any[] {
+    return [
+      {
+        name: 'Person',
+        type: 'Person',
         category: 'identity',
-        description: 'Create a new Person object',
-        parameters: {
+        description: 'Data structure for a Person object',
+        properties: {
           name: { type: 'string', required: true },
-          email: { type: 'string', required: false },
-          publicKey: { type: 'string', required: true }
-        },
-        returns: { type: 'Person' },
-        execute: async (instance: Instance, params: any) => {
-          // Implementation would use ONE platform Person.create
-          return { id: 'person-id', ...params };
+          email: { type: 'string', format: 'email' },
+          publicKey: { type: 'string', required: true },
+          birthDate: { type: 'date' }
         }
       },
-      
-      // Profile recipes
-      'CreateProfile': {
-        name: 'CreateProfile',
+      {
+        name: 'Profile',
+        type: 'Profile', 
         category: 'identity',
-        description: 'Create a new Profile for a Person',
-        parameters: {
-          personId: { type: 'string', required: true },
+        description: 'Data structure for a user Profile',
+        properties: {
+          personId: { type: 'reference', refType: 'Person', required: true },
           displayName: { type: 'string', required: true },
-          avatar: { type: 'string', required: false }
-        },
-        returns: { type: 'Profile' },
-        execute: async (instance: Instance, params: any) => {
-          // Implementation would use ONE platform Profile creation
-          return { id: 'profile-id', ...params };
+          avatar: { type: 'string', format: 'dataUri' },
+          bio: { type: 'string', maxLength: 500 }
         }
       },
-      
-      // Channel recipes
-      'CreateChannel': {
-        name: 'CreateChannel',
+      {
+        name: 'Message',
+        type: 'Message',
         category: 'communication',
-        description: 'Create a new communication channel',
-        parameters: {
-          name: { type: 'string', required: true },
-          type: { type: 'string', enum: ['direct', 'group'], required: true },
-          participants: { type: 'array', items: 'string', required: true }
-        },
-        returns: { type: 'Channel' },
-        execute: async (instance: Instance, params: any) => {
-          // Implementation would use ONE platform Channel creation
-          return { id: 'channel-id', ...params };
-        }
-      },
-      
-      // Message recipes
-      'SendMessage': {
-        name: 'SendMessage',
-        category: 'communication',
-        description: 'Send a message to a channel',
-        parameters: {
-          channelId: { type: 'string', required: true },
+        description: 'Data structure for a Message',
+        properties: {
+          channelId: { type: 'reference', refType: 'Channel', required: true },
+          senderId: { type: 'reference', refType: 'Person', required: true },
           content: { type: 'string', required: true },
-          metadata: { type: 'object', required: false }
-        },
-        returns: { type: 'Message' },
-        execute: async (instance: Instance, params: any) => {
-          // Implementation would use ONE platform messaging
-          return { id: 'message-id', timestamp: Date.now(), ...params };
+          timestamp: { type: 'timestamp', required: true },
+          metadata: { type: 'object' }
         }
       },
-      
-      // Group recipes
-      'CreateGroup': {
-        name: 'CreateGroup',
-        category: 'organization',
-        description: 'Create a new group',
-        parameters: {
+      {
+        name: 'Channel',
+        type: 'Channel',
+        category: 'communication',
+        description: 'Data structure for a communication Channel',
+        properties: {
           name: { type: 'string', required: true },
-          description: { type: 'string', required: false },
-          members: { type: 'array', items: 'string', required: false }
-        },
-        returns: { type: 'Group' },
-        execute: async (instance: Instance, params: any) => {
-          // Implementation would use ONE platform Group creation
-          return { id: 'group-id', ...params };
+          channelType: { type: 'enum', values: ['direct', 'group'], required: true },
+          participants: { type: 'array', items: { type: 'reference', refType: 'Person' } },
+          createdAt: { type: 'timestamp', required: true }
         }
       }
-    };
-
-    return recipeMap[name];
-  }
-
-  private getAllRecipes(): any[] {
-    const recipes = [
-      'CreatePerson',
-      'CreateProfile',
-      'CreateChannel',
-      'SendMessage',
-      'CreateGroup'
     ];
-
-    return recipes.map(name => this.getRecipe(name)).filter(r => r);
   }
 }

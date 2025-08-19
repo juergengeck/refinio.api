@@ -79,6 +79,16 @@ sequenceDiagram
     Note over CLI,API: Session established with permissions
 ```
 
+## Understanding Recipes
+
+In the ONE platform, **recipes are data structure definitions** (schemas), not executable code. They define:
+- The shape and structure of ONE objects
+- Field types and validation rules
+- Relationships between objects
+- Required and optional properties
+
+Think of recipes like database schemas or TypeScript interfaces - they describe data, they don't execute operations.
+
 ## API Operations
 
 ### Object Operations
@@ -108,21 +118,43 @@ refinio delete <id>
 refinio list <type> [--filter <query>]
 ```
 
-### Recipe Operations
+### Recipe Operations (Data Structure Management)
 
-#### Execute Recipe
+#### Register Recipe (Admin Only)
 ```bash
-refinio recipe execute <recipe-name> --params <json-file>
+# Register a new data structure definition
+refinio recipe register --file recipe.json
+```
+
+Example recipe definition:
+```json
+{
+  "name": "CustomMessage",
+  "type": "CustomMessage",
+  "category": "communication",
+  "description": "Custom message data structure",
+  "properties": {
+    "sender": { "type": "reference", "refType": "Person", "required": true },
+    "content": { "type": "string", "required": true },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "priority": { "type": "enum", "values": ["low", "medium", "high"] }
+  }
+}
 ```
 
 #### List Recipes
 ```bash
+# List all registered data structures
 refinio recipe list
+
+# Filter by category
+refinio recipe list --category communication
 ```
 
-#### Get Recipe Schema
+#### Get Recipe Definition
 ```bash
-refinio recipe schema <recipe-name>
+# Get the data structure definition for a recipe
+refinio recipe get Person
 ```
 
 ### Stream Operations
@@ -328,7 +360,7 @@ refinio auth generate alice@example.com
 # Authenticate
 refinio auth login --keys ~/.refinio/keys.json
 
-# Create a new object
+# Create a new object (using a registered recipe structure)
 refinio create Person --data person.json
 
 # Get an object
@@ -344,14 +376,20 @@ refinio delete abc123def456
 refinio list Person --filter "name=John*"
 ```
 
-### Recipe Execution
+### Recipe Management (Data Structures)
 
 ```bash
-# Execute a recipe
-refinio recipe execute CreateProfile --params profile-params.json
+# Register a new data structure (admin only)
+refinio recipe register --file my-recipe.json
 
-# Get recipe documentation
-refinio recipe schema CreateProfile
+# List all data structures
+refinio recipe list
+
+# Get a specific data structure definition
+refinio recipe get Profile
+
+# List data structures by category
+refinio recipe list --category identity
 ```
 
 ### Real-time Monitoring

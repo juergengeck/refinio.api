@@ -21,9 +21,11 @@ export enum MessageType {
   DELETE_REQUEST = 'crud.delete.request',
   DELETE_RESPONSE = 'crud.delete.response',
   
-  // Recipe Operations
-  RECIPE_EXECUTE = 'recipe.execute',
-  RECIPE_RESULT = 'recipe.result',
+  // Recipe Operations (data structure definitions)
+  RECIPE_REGISTER = 'recipe.register',
+  RECIPE_GET = 'recipe.get',
+  RECIPE_LIST = 'recipe.list',
+  RECIPE_RESPONSE = 'recipe.response',
   
   // Streaming
   STREAM_SUBSCRIBE = 'stream.subscribe',
