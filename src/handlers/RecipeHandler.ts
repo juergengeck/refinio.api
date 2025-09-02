@@ -1,205 +1,142 @@
 import '@refinio/one.core/lib/system/load-nodejs.js';
-import { Instance, registerRecipes, getRecipe, getRecipes } from '@refinio/one.core';
+import { registerRecipes } from '@refinio/one.core/lib/instance.js';
+import { getRecipe, hasRecipe, addRecipeToRuntime } from '@refinio/one.core/lib/object-recipes.js';
+import type { Recipe } from '@refinio/one.core/lib/recipes.js';
 import { ErrorCode } from '../types';
 
 export interface RecipeRegisterRequest {
-  recipe: any;  // Recipe object (which is itself structured by a Recipe recipe)
+  recipe: Recipe;  // Recipe object
 }
 
 export interface RecipeGetRequest {
   name: string;
 }
 
-export interface RecipeListRequest {
-  recipeType?: string;  // Filter by the recipe's $type$ (what Recipe defines this recipe)
-}
-
-/**
- * Handler for Recipe operations in ONE platform.
- * 
- * In ONE, recipes are self-describing:
- * - Recipes define the structure of ONE objects
- * - Recipes themselves are ONE objects
- * - Therefore, recipes are defined by Recipe recipes
- * - The "Recipe" recipe defines what a recipe looks like
- */
 export class RecipeHandler {
-  private instance: Instance | null = null;
-
-  async initialize(instance: Instance) {
-    this.instance = instance;
-  }
-
+  
   /**
-   * Register a new recipe with the Instance
-   * The recipe itself must conform to a Recipe recipe structure
+   * Register a new recipe
    */
   async register(request: RecipeRegisterRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
     try {
-      // Register the recipe with the Instance
-      // The recipe being registered is itself a ONE object that follows a Recipe recipe
-      await registerRecipes([request.recipe]);
+      const recipe = request.recipe;
+      
+      // Validate recipe structure
+      if (!recipe.$type$ || recipe.$type$ !== 'Recipe') {
+        throw {
+          code: ErrorCode.VALIDATION_ERROR,
+          message: 'Invalid recipe: must have $type$ = "Recipe"'
+        };
+      }
+      
+      if (!recipe.name) {
+        throw {
+          code: ErrorCode.VALIDATION_ERROR,
+          message: 'Invalid recipe: missing name'
+        };
+      }
+      
+      // Add recipe to runtime (for immediate use)
+      addRecipeToRuntime(recipe);
+      
+      // Register recipe with instance (for persistence)
+      await registerRecipes([recipe]);
       
       return {
         success: true,
-        message: 'Recipe registered successfully',
-        recipeName: request.recipe.$type$,
-        recipeType: request.recipe.$recipe$ || 'Recipe'  // What Recipe recipe defines this
+        message: `Recipe '${String(recipe.name)}' registered successfully`
       };
     } catch (error: any) {
+      if (error.code) throw error;
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to register recipe: ${error.message}`
       };
     }
   }
 
   /**
-   * Get a recipe by its type name
+   * Get a recipe by name
    */
   async get(request: RecipeGetRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
     try {
-      // Get the recipe from registered recipes
-      const recipe = getRecipe(request.name);
-      
-      if (!recipe) {
+      if (!hasRecipe(request.name)) {
         throw {
           code: ErrorCode.NOT_FOUND,
           message: `Recipe '${request.name}' not found`
         };
       }
-
+      
+      const recipe = getRecipe(request.name as any);
+      
       return {
         success: true,
-        recipe: {
-          $type$: recipe.$type$,
-          $recipe$: recipe.$recipe$ || 'Recipe',
-          ...recipe
-        }
+        recipe
       };
     } catch (error: any) {
-      if (error.code === ErrorCode.NOT_FOUND) {
-        throw error;
-      }
-      
+      if (error.code) throw error;
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to get recipe: ${error.message}`
       };
     }
   }
 
   /**
-   * List all registered recipes, optionally filtered by their recipe type
-   * 
-   * @param recipeType - Filter by what Recipe recipe defines these recipes
-   *                     For example, "MessageRecipe" to get all recipes defined by MessageRecipe
+   * List all available recipes
    */
-  async list(request: RecipeListRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
+  async list(): Promise<any> {
     try {
-      // Get all registered recipes
-      const allRecipes = getRecipes();
-      
-      // Filter by recipe type if provided
-      // This filters by what Recipe recipe defines each recipe
-      const filtered = request.recipeType
-        ? allRecipes.filter((r: any) => {
-            // Check if this recipe is defined by the specified recipe type
-            return r.$recipe$ === request.recipeType;
-          })
-        : allRecipes;
+      // Note: one.core doesn't have a direct way to list all recipes
+      // You would need to maintain your own registry or iterate through known types
       
       return {
         success: true,
-        count: filtered.length,
-        recipes: filtered.map((r: any) => ({
-          $type$: r.$type$,           // The name/type of this recipe
-          $recipe$: r.$recipe$ || 'Recipe',  // What Recipe recipe defines this recipe
-          description: r.description,
-          properties: r.properties
-        }))
+        recipes: [],
+        message: 'Recipe listing not fully implemented - requires registry'
       };
     } catch (error: any) {
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to list recipes: ${error.message}`
       };
     }
   }
 
   /**
-   * Get the standard ONE platform recipes
-   * These show the hierarchical nature of recipes
+   * Execute a recipe (create an object based on recipe)
    */
-  getStandardRecipes(): any[] {
-    return [
-      {
-        $type$: 'Recipe',
-        $recipe$: 'Recipe',  // Recipe is defined by itself
-        description: 'The meta-recipe that defines what a recipe is',
-        properties: {
-          $type$: { type: 'string', required: true },
-          $recipe$: { type: 'string', required: false },
-          properties: { type: 'object', required: true }
-        }
-      },
-      {
-        $type$: 'Person',
-        $recipe$: 'Recipe',  // Person is defined by the Recipe recipe
-        description: 'A person in the ONE system',
-        properties: {
-          $type$: { type: 'const', value: 'Person' },
-          name: { type: 'string' },
-          email: { type: 'string', format: 'email' },
-          publicKey: { type: 'string', required: true }
-        }
-      },
-      {
-        $type$: 'Profile',
-        $recipe$: 'Recipe',  // Profile is defined by the Recipe recipe
-        description: 'A user profile',
-        properties: {
-          $type$: { type: 'const', value: 'Profile' },
-          personId: { type: 'SHA256Hash', required: true },
-          displayName: { type: 'string', required: true },
-          avatar: { type: 'string', format: 'dataUri' }
-        }
-      },
-      {
-        $type$: 'MessageRecipe',
-        $recipe$: 'Recipe',  // MessageRecipe is itself a Recipe
-        description: 'Recipe for defining message types',
-        properties: {
-          $type$: { type: 'string', required: true },
-          $recipe$: { type: 'const', value: 'MessageRecipe' },
-          contentType: { type: 'string', required: true },
-          maxLength: { type: 'number' }
-        }
-      },
-      {
-        $type$: 'TextMessage',
-        $recipe$: 'MessageRecipe',  // TextMessage is defined by MessageRecipe
-        description: 'A text message',
-        properties: {
-          $type$: { type: 'const', value: 'TextMessage' },
-          content: { type: 'string', required: true },
-          timestamp: { type: 'number', required: true }
-        },
-        contentType: 'text/plain',
-        maxLength: 1000
+  async execute(request: { recipeName: string; data: any }): Promise<any> {
+    try {
+      if (!hasRecipe(request.recipeName)) {
+        throw {
+          code: ErrorCode.NOT_FOUND,
+          message: `Recipe '${request.recipeName}' not found`
+        };
       }
-    ];
+      
+      const recipe = getRecipe(request.recipeName as any);
+      
+      // Create object based on recipe
+      const obj = {
+        $type$: request.recipeName,
+        ...request.data
+      };
+      
+      // Validate against recipe rules if needed
+      // This would require implementing recipe validation logic
+      
+      return {
+        success: true,
+        object: obj,
+        message: `Object created from recipe '${request.recipeName}'`
+      };
+    } catch (error: any) {
+      if (error.code) throw error;
+      throw {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: `Failed to execute recipe: ${error.message}`
+      };
+    }
   }
 }

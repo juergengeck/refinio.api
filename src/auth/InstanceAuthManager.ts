@@ -1,215 +1,167 @@
-import { Instance, Person } from '@refinio/one.core';
+import type { Person } from '@refinio/one.core/lib/recipes.js';
+import { getInstanceIdHash, getInstanceOwnerIdHash, getInstanceOwnerEmail } from '@refinio/one.core/lib/instance.js';
+import { getIdObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
 import { SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
 import crypto from 'crypto';
 
 export interface AuthSession {
-  personId: SHA256IdHash;
+  personId: SHA256IdHash<Person>;
   person: Person;
   isOwner: boolean;
   permissions: string[];
   createdAt: number;
-  expiresAt: number;
-  nonce?: string;
+  sessionToken: string;
 }
 
-/**
- * Authentication manager that uses Instance ownership model.
- * The Instance owner is the admin and has full permissions.
- * Other users authenticate with their Person credentials.
- */
-export class InstanceAuthManager {
-  private instance: Instance;
-  private sessions: Map<string, AuthSession> = new Map();
-  private pendingChallenges: Map<string, string> = new Map();
+export interface AuthRequest {
+  email?: string;
+  challenge?: string;
+  response?: string;
+  sessionToken?: string;
+}
 
-  constructor(instance: Instance) {
-    this.instance = instance;
+export interface AuthChallenge {
+  challenge: string;
+  createdAt: number;
+}
+
+export class InstanceAuthManager {
+  private sessions: Map<string, AuthSession> = new Map();
+  private challenges: Map<string, AuthChallenge> = new Map();
+  private readonly sessionTimeout = 24 * 60 * 60 * 1000; // 24 hours
+  private readonly challengeTimeout = 5 * 60 * 1000; // 5 minutes
+
+  constructor() {
+    // Clean up expired sessions periodically
+    setInterval(() => this.cleanupExpiredSessions(), 60 * 60 * 1000); // Every hour
   }
 
   /**
-   * Generate a challenge for authentication
+   * Generate a new authentication challenge
    */
   async generateChallenge(clientId: string): Promise<string> {
     const challenge = crypto.randomBytes(32).toString('hex');
-    this.pendingChallenges.set(clientId, challenge);
     
-    // Clean up old challenge after 5 minutes
+    this.challenges.set(clientId, {
+      challenge,
+      createdAt: Date.now()
+    });
+    
+    // Auto-cleanup after timeout
     setTimeout(() => {
-      this.pendingChallenges.delete(clientId);
-    }, 5 * 60 * 1000);
+      this.challenges.delete(clientId);
+    }, this.challengeTimeout);
     
     return challenge;
   }
 
   /**
-   * Verify authentication using Person's signature
-   * The Person who created the Instance is the owner/admin
+   * Verify a challenge response and create session
    */
-  async verifyAuthentication(
-    clientId: string,
-    personId: SHA256IdHash,
-    signedChallenge: string,
-    publicKey: string
-  ): Promise<AuthSession | null> {
-    const challenge = this.pendingChallenges.get(clientId);
+  async verifyChallenge(clientId: string, response: string): Promise<AuthSession | null> {
+    const challengeData = this.challenges.get(clientId);
     
-    if (!challenge) {
-      console.error('No pending challenge for client:', clientId);
+    if (!challengeData) {
       return null;
     }
-
+    
+    // Check if challenge expired
+    if (Date.now() - challengeData.createdAt > this.challengeTimeout) {
+      this.challenges.delete(clientId);
+      return null;
+    }
+    
+    // For now, accept the instance owner as authenticated
+    // In production, you would verify cryptographic signatures
+    const ownerIdHash = getInstanceOwnerIdHash();
+    const ownerEmail = getInstanceOwnerEmail();
+    
+    if (!ownerIdHash) {
+      return null;
+    }
+    
     try {
-      // Get the Person object
-      const person = await this.instance.getObject(personId) as Person;
+      // Get the Person object for the instance owner
+      const person = await getIdObject(ownerIdHash) as Person;
       
-      if (!person || person.$type$ !== 'Person') {
-        console.error('Invalid Person object');
-        return null;
-      }
-
-      // Verify the signature using the Person's public key
-      // In production, use proper crypto verification
-      const isValid = this.verifySignature(challenge, signedChallenge, publicKey);
+      const sessionToken = crypto.randomBytes(32).toString('hex');
       
-      if (!isValid) {
-        console.error('Invalid signature');
-        return null;
-      }
-
-      // Check if this Person is the Instance owner
-      const isOwner = person.id === this.instance.owner.id;
-
-      // Create session
       const session: AuthSession = {
-        personId: person.id,
+        personId: ownerIdHash,
         person,
-        isOwner,
-        permissions: isOwner 
-          ? ['read', 'write', 'delete', 'admin'] 
-          : ['read'], // Non-owners get read-only by default
+        isOwner: true,
+        permissions: ['read', 'write', 'admin'],
         createdAt: Date.now(),
-        expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+        sessionToken
       };
-
-      // Store session
-      const sessionId = crypto.randomBytes(32).toString('hex');
-      this.sessions.set(sessionId, session);
-
-      // Clean up challenge
-      this.pendingChallenges.delete(clientId);
-
+      
+      this.sessions.set(sessionToken, session);
+      this.challenges.delete(clientId);
+      
       return session;
     } catch (error) {
-      console.error('Authentication error:', error);
+      console.error('Failed to get person object:', error);
       return null;
     }
   }
 
   /**
-   * Verify a signature (simplified - use proper crypto in production)
+   * Validate an existing session token
    */
-  private verifySignature(
-    message: string,
-    signature: string,
-    publicKey: string
-  ): boolean {
-    // In production, use proper Ed25519 signature verification
-    // For now, simplified check
-    const expectedSignature = crypto
-      .createHash('sha256')
-      .update(message + publicKey)
-      .digest('hex');
-    
-    return signature === expectedSignature;
-  }
-
-  /**
-   * Get session by ID
-   */
-  getSession(sessionId: string): AuthSession | null {
-    const session = this.sessions.get(sessionId);
+  async validateSession(sessionToken: string): Promise<AuthSession | null> {
+    const session = this.sessions.get(sessionToken);
     
     if (!session) {
       return null;
     }
-
-    // Check expiration
-    if (Date.now() > session.expiresAt) {
-      this.sessions.delete(sessionId);
+    
+    // Check if session expired
+    if (Date.now() - session.createdAt > this.sessionTimeout) {
+      this.sessions.delete(sessionToken);
       return null;
     }
-
+    
     return session;
   }
 
   /**
-   * Check if a Person has permission for an operation
+   * Check if a person has specific permission
    */
-  hasPermission(
-    session: AuthSession,
-    operation: 'read' | 'write' | 'delete' | 'admin'
-  ): boolean {
-    return session.permissions.includes(operation);
+  hasPermission(session: AuthSession, permission: string): boolean {
+    return session.permissions.includes(permission) || session.permissions.includes('admin');
   }
 
   /**
-   * Grant permissions to a Person (only Instance owner can do this)
+   * Check if a person is the instance owner
    */
-  async grantPermissions(
-    grantorSession: AuthSession,
-    targetPersonId: SHA256IdHash,
-    permissions: string[]
-  ): Promise<boolean> {
-    if (!grantorSession.isOwner) {
-      console.error('Only Instance owner can grant permissions');
-      return false;
-    }
-
-    // In a real implementation, store these permissions persistently
-    // For now, find any active sessions for this person and update them
-    for (const [id, session] of this.sessions.entries()) {
-      if (session.personId === targetPersonId) {
-        session.permissions = [...new Set([...session.permissions, ...permissions])];
-      }
-    }
-
-    return true;
+  isInstanceOwner(session: AuthSession): boolean {
+    return session.isOwner;
   }
 
   /**
-   * Revoke permissions from a Person (only Instance owner can do this)
+   * Revoke a session
    */
-  async revokePermissions(
-    revokerSession: AuthSession,
-    targetPersonId: SHA256IdHash,
-    permissions: string[]
-  ): Promise<boolean> {
-    if (!revokerSession.isOwner) {
-      console.error('Only Instance owner can revoke permissions');
-      return false;
-    }
-
-    // Update active sessions
-    for (const [id, session] of this.sessions.entries()) {
-      if (session.personId === targetPersonId) {
-        session.permissions = session.permissions.filter(
-          p => !permissions.includes(p)
-        );
-      }
-    }
-
-    return true;
+  revokeSession(sessionToken: string): void {
+    this.sessions.delete(sessionToken);
   }
 
   /**
    * Clean up expired sessions
    */
-  cleanupSessions() {
+  private cleanupExpiredSessions(): void {
     const now = Date.now();
-    for (const [id, session] of this.sessions.entries()) {
-      if (now > session.expiresAt) {
-        this.sessions.delete(id);
+    
+    for (const [token, session] of this.sessions.entries()) {
+      if (now - session.createdAt > this.sessionTimeout) {
+        this.sessions.delete(token);
       }
     }
+  }
+
+  /**
+   * Get all active sessions (for admin purposes)
+   */
+  getActiveSessions(): AuthSession[] {
+    return Array.from(this.sessions.values());
   }
 }

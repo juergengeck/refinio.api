@@ -1,16 +1,20 @@
 import { EventEmitter } from 'events';
-import { Instance } from '@refinio/one.core';
-import { QuicTransport, QuicConnection, QuicStream } from '@refinio/one.core/lib/system/quic-transport.js';
+import type { QuicTransport } from '@refinio/one.core/lib/system/quic-transport.js';
+import { getInstanceIdHash } from '@refinio/one.core/lib/instance.js';
 import { InstanceAuthManager, AuthSession } from '../auth/InstanceAuthManager';
+import { ObjectHandler } from '../handlers/ObjectHandler';
+import { RecipeHandler } from '../handlers/RecipeHandler';
+import { ProfileHandler } from '../handlers/ProfileHandler';
 import { MessageType, Message, ErrorCode } from '../types';
+import crypto from 'crypto';
 
 export interface QuicVCServerOptions {
-  instance: Instance;
   quicTransport: QuicTransport;
   authManager: InstanceAuthManager;
   handlers: {
-    object: any;
-    recipe: any;
+    object: ObjectHandler;
+    recipe: RecipeHandler;
+    profile: ProfileHandler;
   };
   config: {
     port: number;
@@ -18,14 +22,24 @@ export interface QuicVCServerOptions {
   };
 }
 
+interface ClientSession {
+  id: string;
+  authenticated: boolean;
+  authSession?: AuthSession;
+  challenge?: string;
+  state: 'new' | 'challenging' | 'authenticated';
+}
+
 /**
  * QUICVC Server using one.core's QUIC transport with verifiable credentials
+ * 
+ * Note: This is a simplified implementation using the WebSocket-based QUIC transport.
+ * In production, you would implement proper QUIC streams and verifiable credential validation.
  */
 export class QuicVCServer extends EventEmitter {
   private options: QuicVCServerOptions;
-  private connections: Map<string, QuicConnection> = new Map();
-  private sessions: Map<string, AuthSession> = new Map();
-  private streams: Map<string, QuicStream> = new Map();
+  private sessions: Map<string, ClientSession> = new Map();
+  private isRunning: boolean = false;
 
   constructor(options: QuicVCServerOptions) {
     super();
@@ -35,181 +49,156 @@ export class QuicVCServer extends EventEmitter {
   async start() {
     const { quicTransport, config } = this.options;
     
+    console.log(`Starting QUICVC server on ${config.host}:${config.port}`);
+    
     // Listen for incoming connections
     await quicTransport.listen({
       port: config.port,
       host: config.host
     });
+    
+    // Set up message handlers
+    this.setupMessageHandlers();
+    
+    this.isRunning = true;
+    console.log(`QUICVC server listening on ${config.host}:${config.port}`);
+  }
 
-    // Handle incoming connections
-    quicTransport.on('connection', async (connection: QuicConnection) => {
-      console.log(`New QUIC connection from ${connection.remoteAddress}:${connection.remotePort}`);
-      this.handleConnection(connection);
-    });
+  async stop() {
+    if (this.isRunning) {
+      console.log('Stopping QUICVC server...');
+      
+      // Close all sessions
+      this.sessions.clear();
+      
+      // Close the transport
+      this.options.quicTransport.close();
+      
+      this.isRunning = false;
+      console.log('QUICVC server stopped');
+    }
+  }
 
-    // Handle incoming messages (WebSocket compatibility layer)
-    quicTransport.on('message', async (data: any, connection: QuicConnection) => {
+  private setupMessageHandlers() {
+    const { quicTransport } = this.options;
+    
+    // Since the Node.js QUIC transport is WebSocket-based, we handle messages directly
+    quicTransport.on('message', async (data: any, rinfo: any) => {
       try {
-        const message = JSON.parse(data.toString()) as Message;
-        await this.handleMessage(message, connection);
+        const message = typeof data === 'string' ? JSON.parse(data) : data;
+        const clientId = `${rinfo.address}:${rinfo.port}`;
+        
+        await this.handleMessage(message, clientId, rinfo);
       } catch (error) {
-        console.error('Failed to handle message:', error);
+        console.error('Error handling message:', error);
       }
     });
-
-    // Clean up sessions periodically
-    setInterval(() => {
-      this.options.authManager.cleanupSessions();
-    }, 60 * 1000); // Every minute
-  }
-
-  private async handleConnection(connection: QuicConnection) {
-    const clientId = `${connection.remoteAddress}:${connection.remotePort}`;
-    this.connections.set(clientId, connection);
-
-    // Handle connection close
-    connection.on('close', () => {
-      console.log(`Connection closed: ${clientId}`);
-      this.connections.delete(clientId);
-      this.sessions.delete(clientId);
+    
+    quicTransport.on('error', (error: Error) => {
+      console.error('QUIC transport error:', error);
+      this.emit('error', error);
     });
   }
 
-  private async handleMessage(message: Message, connection: QuicConnection) {
-    const clientId = `${connection.remoteAddress}:${connection.remotePort}`;
+  private async handleMessage(message: Message, clientId: string, rinfo: any) {
+    // Get or create client session
+    let session = this.sessions.get(clientId);
+    if (!session) {
+      session = {
+        id: clientId,
+        authenticated: false,
+        state: 'new'
+      };
+      this.sessions.set(clientId, session);
+    }
     
+    // Handle message based on type
     switch (message.type) {
       case MessageType.AUTH_REQUEST:
-        await this.handleAuthRequest(message, clientId, connection);
-        break;
-        
-      case MessageType.AUTH_RESPONSE:
-        await this.handleAuthResponse(message, clientId, connection);
+        await this.handleAuthRequest(message, session, rinfo);
         break;
         
       case MessageType.CREATE_REQUEST:
       case MessageType.READ_REQUEST:
       case MessageType.UPDATE_REQUEST:
       case MessageType.DELETE_REQUEST:
-        await this.handleCrudOperation(message, clientId, connection);
+        await this.handleCrudOperation(message, session, rinfo);
         break;
         
       case MessageType.RECIPE_REGISTER:
-        await this.handleRecipeRegister(message, clientId, connection);
-        break;
-        
       case MessageType.RECIPE_GET:
-        await this.handleRecipeGet(message, clientId, connection);
-        break;
-        
       case MessageType.RECIPE_LIST:
-        await this.handleRecipeList(message, clientId, connection);
+        await this.handleRecipeOperation(message, session, rinfo);
         break;
         
       case MessageType.STREAM_SUBSCRIBE:
-        await this.handleStreamSubscribe(message, clientId, connection);
+        await this.handleStreamSubscribe(message, session, rinfo);
         break;
         
       default:
-        await this.sendError(connection, message.id, ErrorCode.VALIDATION_ERROR, 'Unknown message type');
+        await this.sendError(rinfo, message.id, ErrorCode.VALIDATION_ERROR, 'Unknown message type');
     }
   }
 
-  private async handleAuthRequest(message: Message, clientId: string, connection: QuicConnection) {
+  private async handleAuthRequest(message: Message, session: ClientSession, rinfo: any) {
     try {
-      // Generate challenge for this client
-      const challenge = await this.options.authManager.generateChallenge(clientId);
+      const { authManager } = this.options;
       
-      // Send challenge back
-      await this.sendMessage(connection, {
-        id: message.id,
-        type: MessageType.AUTH_CHALLENGE,
-        timestamp: Date.now(),
-        payload: { 
-          challenge,
-          instanceId: this.options.instance.id,
-          instanceOwner: this.options.instance.owner.id
+      if (message.payload.response && session.challenge) {
+        // Verify challenge response
+        const authSession = await authManager.verifyChallenge(session.id, message.payload.response);
+        
+        if (authSession) {
+          session.authenticated = true;
+          session.authSession = authSession;
+          session.state = 'authenticated';
+          
+          await this.sendMessage(rinfo, {
+            id: message.id,
+            type: MessageType.AUTH_RESPONSE,
+            timestamp: Date.now(),
+            payload: {
+              success: true,
+              sessionToken: authSession.sessionToken,
+              permissions: authSession.permissions
+            }
+          });
+        } else {
+          await this.sendError(rinfo, message.id, ErrorCode.UNAUTHORIZED, 'Invalid credentials');
         }
-      });
-    } catch (error: any) {
-      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, 'Authentication failed');
-    }
-  }
-
-  private async handleAuthResponse(message: Message, clientId: string, connection: QuicConnection) {
-    try {
-      const { personId, signature, publicKey } = message.payload;
-      
-      // Verify authentication using Instance's auth manager
-      const session = await this.options.authManager.verifyAuthentication(
-        clientId,
-        personId,
-        signature,
-        publicKey
-      );
-      
-      if (!session) {
-        await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Authentication failed');
-        return;
+      } else {
+        // Generate and send challenge
+        const challenge = await authManager.generateChallenge(session.id);
+        session.challenge = challenge;
+        session.state = 'challenging';
+        
+        await this.sendMessage(rinfo, {
+          id: message.id,
+          type: MessageType.AUTH_CHALLENGE,
+          timestamp: Date.now(),
+          payload: { challenge }
+        });
       }
-      
-      // Store session
-      this.sessions.set(clientId, session);
-      
-      // Send success response
-      await this.sendMessage(connection, {
-        id: message.id,
-        type: MessageType.AUTH_RESPONSE,
-        timestamp: Date.now(),
-        payload: {
-          authenticated: true,
-          personId: session.personId,
-          isOwner: session.isOwner,
-          permissions: session.permissions,
-          expiresAt: session.expiresAt
-        }
-      });
     } catch (error: any) {
-      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
+      await this.sendError(rinfo, message.id, ErrorCode.INTERNAL_ERROR, error.message);
     }
   }
 
-  private async handleCrudOperation(message: Message, clientId: string, connection: QuicConnection) {
-    const session = this.sessions.get(clientId);
-    
-    if (!session) {
-      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
+  private async handleCrudOperation(message: Message, session: ClientSession, rinfo: any) {
+    if (!session.authenticated || !session.authSession) {
+      await this.sendError(rinfo, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
       return;
     }
     
-    // Check permissions based on operation type
-    let requiredPermission: 'read' | 'write' | 'delete' = 'read';
-    
-    switch (message.type) {
-      case MessageType.CREATE_REQUEST:
-      case MessageType.UPDATE_REQUEST:
-        requiredPermission = 'write';
-        break;
-      case MessageType.DELETE_REQUEST:
-        requiredPermission = 'delete';
-        break;
-      case MessageType.READ_REQUEST:
-        requiredPermission = 'read';
-        break;
-    }
-    
-    if (!this.options.authManager.hasPermission(session, requiredPermission)) {
-      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, `No ${requiredPermission} permission`);
-      return;
-    }
+    const { object } = this.options.handlers;
     
     try {
       let result: any;
       
       switch (message.type) {
         case MessageType.CREATE_REQUEST:
-          result = await this.options.handlers.object.create(message.payload);
-          await this.sendMessage(connection, {
+          result = await object.create(message.payload);
+          await this.sendMessage(rinfo, {
             id: message.id,
             type: MessageType.CREATE_RESPONSE,
             timestamp: Date.now(),
@@ -218,8 +207,8 @@ export class QuicVCServer extends EventEmitter {
           break;
           
         case MessageType.READ_REQUEST:
-          result = await this.options.handlers.object.read(message.payload);
-          await this.sendMessage(connection, {
+          result = await object.read(message.payload);
+          await this.sendMessage(rinfo, {
             id: message.id,
             type: MessageType.READ_RESPONSE,
             timestamp: Date.now(),
@@ -228,8 +217,8 @@ export class QuicVCServer extends EventEmitter {
           break;
           
         case MessageType.UPDATE_REQUEST:
-          result = await this.options.handlers.object.update(message.payload);
-          await this.sendMessage(connection, {
+          result = await object.update(message.payload);
+          await this.sendMessage(rinfo, {
             id: message.id,
             type: MessageType.UPDATE_RESPONSE,
             timestamp: Date.now(),
@@ -238,8 +227,8 @@ export class QuicVCServer extends EventEmitter {
           break;
           
         case MessageType.DELETE_REQUEST:
-          result = await this.options.handlers.object.delete(message.payload);
-          await this.sendMessage(connection, {
+          result = await object.delete(message.payload);
+          await this.sendMessage(rinfo, {
             id: message.id,
             type: MessageType.DELETE_RESPONSE,
             timestamp: Date.now(),
@@ -248,142 +237,80 @@ export class QuicVCServer extends EventEmitter {
           break;
       }
     } catch (error: any) {
-      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
+      await this.sendError(rinfo, message.id, error.code || ErrorCode.INTERNAL_ERROR, error.message);
     }
   }
 
-  private async handleRecipeRegister(message: Message, clientId: string, connection: QuicConnection) {
-    const session = this.sessions.get(clientId);
-    
-    if (!session) {
-      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
+  private async handleRecipeOperation(message: Message, session: ClientSession, rinfo: any) {
+    if (!session.authenticated || !session.authSession) {
+      await this.sendError(rinfo, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
       return;
     }
     
-    // Registering recipes requires admin permission
-    if (!this.options.authManager.hasPermission(session, 'admin')) {
-      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'Only admin can register recipes');
-      return;
-    }
+    const { recipe } = this.options.handlers;
     
     try {
-      const result = await this.options.handlers.recipe.register(message.payload);
-      await this.sendMessage(connection, {
-        id: message.id,
-        type: MessageType.RECIPE_RESPONSE,
-        timestamp: Date.now(),
-        payload: result
-      });
-    } catch (error: any) {
-      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
-    }
-  }
-
-  private async handleRecipeGet(message: Message, clientId: string, connection: QuicConnection) {
-    const session = this.sessions.get(clientId);
-    
-    if (!session) {
-      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
-      return;
-    }
-    
-    // Reading recipes requires read permission
-    if (!this.options.authManager.hasPermission(session, 'read')) {
-      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'No read permission');
-      return;
-    }
-    
-    try {
-      const result = await this.options.handlers.recipe.get(message.payload);
-      await this.sendMessage(connection, {
-        id: message.id,
-        type: MessageType.RECIPE_RESPONSE,
-        timestamp: Date.now(),
-        payload: result
-      });
-    } catch (error: any) {
-      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
-    }
-  }
-
-  private async handleRecipeList(message: Message, clientId: string, connection: QuicConnection) {
-    const session = this.sessions.get(clientId);
-    
-    if (!session) {
-      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
-      return;
-    }
-    
-    // Listing recipes requires read permission
-    if (!this.options.authManager.hasPermission(session, 'read')) {
-      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'No read permission');
-      return;
-    }
-    
-    try {
-      const result = await this.options.handlers.recipe.list(message.payload);
-      await this.sendMessage(connection, {
-        id: message.id,
-        type: MessageType.RECIPE_RESPONSE,
-        timestamp: Date.now(),
-        payload: result
-      });
-    } catch (error: any) {
-      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
-    }
-  }
-
-  private async handleStreamSubscribe(message: Message, clientId: string, connection: QuicConnection) {
-    const session = this.sessions.get(clientId);
-    
-    if (!session) {
-      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
-      return;
-    }
-    
-    // Streaming requires at least read permission
-    if (!this.options.authManager.hasPermission(session, 'read')) {
-      await this.sendError(connection, message.id, ErrorCode.FORBIDDEN, 'No read permission for streaming');
-      return;
-    }
-    
-    // Create a stream for this subscription
-    try {
-      const stream = await this.options.quicTransport.createStream(connection);
-      this.streams.set(`${clientId}-${message.id}`, stream);
+      let result: any;
       
-      // Send acknowledgment
-      await this.sendMessage(connection, {
-        id: message.id,
-        type: MessageType.STREAM_EVENT,
-        timestamp: Date.now(),
-        payload: { subscribed: true, streamId: stream.id }
-      });
+      switch (message.type) {
+        case MessageType.RECIPE_REGISTER:
+          result = await recipe.register(message.payload);
+          break;
+          
+        case MessageType.RECIPE_GET:
+          result = await recipe.get(message.payload);
+          break;
+          
+        case MessageType.RECIPE_LIST:
+          result = await recipe.list();
+          break;
+      }
       
-      // Set up event forwarding (simplified)
-      this.options.instance.on('objectChange', async (event: any) => {
-        if (stream) {
-          await stream.write(Buffer.from(JSON.stringify({
-            type: MessageType.STREAM_EVENT,
-            timestamp: Date.now(),
-            payload: event
-          })));
-        }
+      await this.sendMessage(rinfo, {
+        id: message.id,
+        type: MessageType.RECIPE_RESPONSE,
+        timestamp: Date.now(),
+        payload: result
       });
     } catch (error: any) {
-      await this.sendError(connection, message.id, ErrorCode.INTERNAL_ERROR, error.message);
+      await this.sendError(rinfo, message.id, error.code || ErrorCode.INTERNAL_ERROR, error.message);
     }
   }
 
-  private async sendMessage(connection: QuicConnection, message: Message) {
-    // Use QUIC transport's send method (WebSocket compatibility)
-    const data = JSON.stringify(message);
-    await connection.send(data);
+  private async handleStreamSubscribe(message: Message, session: ClientSession, rinfo: any) {
+    if (!session.authenticated) {
+      await this.sendError(rinfo, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
+      return;
+    }
+    
+    // Stream subscription would be implemented here
+    // For now, just acknowledge
+    await this.sendMessage(rinfo, {
+      id: message.id,
+      type: MessageType.STREAM_EVENT,
+      timestamp: Date.now(),
+      payload: {
+        subscribed: true,
+        message: 'Stream subscription not yet implemented'
+      }
+    });
   }
 
-  private async sendError(connection: QuicConnection, id: string, code: ErrorCode, message: string) {
-    await this.sendMessage(connection, {
-      id,
+  private async sendMessage(rinfo: any, message: Message) {
+    try {
+      const { quicTransport } = this.options;
+      const data = JSON.stringify(message);
+      
+      // Send via QUIC transport (WebSocket layer)
+      await quicTransport.send(0, data, rinfo.address, rinfo.port);
+    } catch (error) {
+      console.error('Error sending message:', error);
+    }
+  }
+
+  private async sendError(rinfo: any, messageId: string, code: ErrorCode, message: string) {
+    await this.sendMessage(rinfo, {
+      id: messageId,
       type: 'error' as any,
       timestamp: Date.now(),
       payload: {
@@ -393,15 +320,5 @@ export class QuicVCServer extends EventEmitter {
         }
       }
     });
-  }
-
-  async stop() {
-    // Close all connections
-    for (const connection of this.connections.values()) {
-      await connection.close();
-    }
-    
-    // Close QUIC transport
-    await this.options.quicTransport.close();
   }
 }

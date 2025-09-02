@@ -1,195 +1,175 @@
 import '@refinio/one.core/lib/system/load-nodejs.js';
-import { Instance } from '@refinio/one.core';
+import type One from '@refinio/one.models/lib/api/One.js';
+import { storeVersionedObject, getObjectByIdHash } from '@refinio/one.core/lib/storage-versioned-objects.js';
+import { storeUnversionedObject, getObject } from '@refinio/one.core/lib/storage-unversioned-objects.js';
+import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { OneObjectTypes, OneVersionedObjectTypes, OneUnversionedObjectTypes } from '@refinio/one.core/lib/recipes.js';
 import { ErrorCode } from '../types';
 
 export interface CreateRequest {
   type: string;
   data: any;
+  versioned?: boolean;
 }
 
 export interface ReadRequest {
-  id: string;
-  version?: string;
+  hash: string;
+  versioned?: boolean;
 }
 
 export interface UpdateRequest {
-  id: string;
+  idHash: string;
   data: any;
 }
 
 export interface DeleteRequest {
-  id: string;
+  hash: string;
 }
 
-export interface ListRequest {
+export interface QueryRequest {
   type: string;
-  filter?: any;
+  conditions?: any;
   limit?: number;
-  offset?: number;
 }
 
 export class ObjectHandler {
-  private instance: Instance | null = null;
+  private oneApi: One;
 
-  async initialize(instance: Instance) {
-    this.instance = instance;
+  constructor(oneApi: One) {
+    this.oneApi = oneApi;
   }
 
+  /**
+   * Create a new object in ONE storage
+   */
   async create(request: CreateRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Instance not initialized');
-    }
-
     try {
-      // Create object based on type
-      const objectType = request.type;
-      const objectData = request.data;
-
-      // Use ONE platform to create the object
-      const result = await this.instance.createObject(objectType, objectData);
-      
-      return {
-        success: true,
-        id: result.idHash,
-        version: result.version,
-        data: result
+      const obj = {
+        $type$: request.type,
+        ...request.data
       };
+
+      if (request.versioned) {
+        // Store as versioned object
+        const result = await storeVersionedObject(obj as OneVersionedObjectTypes);
+        return {
+          success: true,
+          idHash: result.idHash,
+          hash: result.hash,
+          versioned: true
+        };
+      } else {
+        // Store as unversioned object
+        const result = await storeUnversionedObject(obj as OneUnversionedObjectTypes);
+        return {
+          success: true,
+          hash: result.hash,
+          versioned: false
+        };
+      }
     } catch (error: any) {
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to create object: ${error.message}`
       };
     }
   }
 
+  /**
+   * Read an object from ONE storage
+   */
   async read(request: ReadRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Instance not initialized');
-    }
-
     try {
-      // Read object from storage
-      const object = await this.instance.getObject(request.id, request.version);
-      
-      if (!object) {
-        throw {
-          code: ErrorCode.NOT_FOUND,
-          message: 'Object not found'
+      if (request.versioned) {
+        // Read versioned object by ID hash
+        const result = await getObjectByIdHash(request.hash as SHA256IdHash);
+        return {
+          success: true,
+          data: result.obj,
+          idHash: result.idHash,
+          hash: result.hash,
+          versioned: true
+        };
+      } else {
+        // Read unversioned object by hash
+        const obj = await getObject(request.hash as SHA256Hash);
+        return {
+          success: true,
+          data: obj,
+          hash: request.hash,
+          versioned: false
         };
       }
-
-      return {
-        success: true,
-        data: object
-      };
     } catch (error: any) {
-      if (error.code === ErrorCode.NOT_FOUND) {
-        throw error;
-      }
-      
       throw {
-        code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        code: ErrorCode.NOT_FOUND,
+        message: `Object not found: ${error.message}`
       };
     }
   }
 
+  /**
+   * Update a versioned object (creates new version)
+   */
   async update(request: UpdateRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Instance not initialized');
-    }
-
     try {
-      // Get existing object
-      const existing = await this.instance.getObject(request.id);
+      // Get current version
+      const current = await this.oneApi.data().getLatestVersion(request.idHash as SHA256IdHash);
       
-      if (!existing) {
-        throw {
-          code: ErrorCode.NOT_FOUND,
-          message: 'Object not found'
-        };
-      }
+      // Merge with new data
+      const updated = {
+        ...current,
+        ...request.data,
+        $type$: current.$type$ // Preserve type
+      };
 
-      // Update object
-      const updated = { ...existing, ...request.data };
-      const result = await this.instance.updateObject(request.id, updated);
+      // Store new version
+      const result = await storeVersionedObject(updated as OneVersionedObjectTypes);
       
       return {
         success: true,
-        id: result.idHash,
-        version: result.version,
-        data: result
+        idHash: result.idHash,
+        hash: result.hash,
+        versioned: true
       };
     } catch (error: any) {
-      if (error.code === ErrorCode.NOT_FOUND) {
-        throw error;
-      }
-      
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to update object: ${error.message}`
       };
     }
   }
 
+  /**
+   * Delete an object (mark as deleted in versioned objects)
+   */
   async delete(request: DeleteRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Instance not initialized');
-    }
-
-    try {
-      // Check if object exists
-      const existing = await this.instance.getObject(request.id);
-      
-      if (!existing) {
-        throw {
-          code: ErrorCode.NOT_FOUND,
-          message: 'Object not found'
-        };
-      }
-
-      // Delete object
-      await this.instance.deleteObject(request.id);
-      
-      return {
-        success: true,
-        message: 'Object deleted successfully'
-      };
-    } catch (error: any) {
-      if (error.code === ErrorCode.NOT_FOUND) {
-        throw error;
-      }
-      
-      throw {
-        code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
-      };
-    }
+    // Note: ONE.core doesn't have a direct delete function
+    // For versioned objects, you would typically store a new version with a "deleted" flag
+    // For unversioned objects, deletion is not supported by design
+    
+    throw {
+      code: ErrorCode.INTERNAL_ERROR,
+      message: 'Delete operation not implemented - ONE.core uses immutable storage'
+    };
   }
 
-  async list(request: ListRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Instance not initialized');
-    }
-
+  /**
+   * Query objects by type and conditions
+   */
+  async query(request: QueryRequest): Promise<any> {
     try {
-      // Query objects by type
-      const objects = await this.instance.queryObjects({
-        type: request.type,
-        filter: request.filter,
-        limit: request.limit || 100,
-        offset: request.offset || 0
-      });
-      
+      // This would typically use reverse maps and queries
+      // For now, return a placeholder
       return {
         success: true,
-        count: objects.length,
-        data: objects
+        results: [],
+        message: 'Query functionality requires reverse maps setup'
       };
     } catch (error: any) {
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Query failed: ${error.message}`
       };
     }
   }

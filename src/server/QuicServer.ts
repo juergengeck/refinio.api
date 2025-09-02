@@ -63,8 +63,10 @@ export class QuicServer extends EventEmitter {
         await this.handleCrudOperation(message, clientId, rinfo);
         break;
         
-      case MessageType.RECIPE_EXECUTE:
-        await this.handleRecipeExecution(message, clientId, rinfo);
+      case MessageType.RECIPE_REGISTER:
+      case MessageType.RECIPE_GET:
+      case MessageType.RECIPE_LIST:
+        await this.handleRecipeOperation(message, clientId, rinfo);
         break;
         
       case MessageType.STREAM_SUBSCRIBE:
@@ -153,7 +155,7 @@ export class QuicServer extends EventEmitter {
     }
   }
 
-  private async handleRecipeExecution(message: Message, clientId: string, rinfo: any) {
+  private async handleRecipeOperation(message: Message, clientId: string, rinfo: any) {
     const session = this.sessions.get(clientId);
     
     if (!session || !session.authenticated) {
@@ -165,7 +167,7 @@ export class QuicServer extends EventEmitter {
       const result = await this.options.handlers.recipe.execute(message.payload);
       await this.sendMessage(rinfo, {
         id: message.id,
-        type: MessageType.RECIPE_RESULT,
+        type: MessageType.RECIPE_RESPONSE,
         timestamp: Date.now(),
         payload: result
       });

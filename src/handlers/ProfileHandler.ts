@@ -1,327 +1,286 @@
 import '@refinio/one.core/lib/system/load-nodejs.js';
-import { 
-  Instance, 
-  createObject,
-  getObjectByHash,
-  getObjectsByType,
-  updateObject,
-  deleteObject
-} from '@refinio/one.core';
+import type One from '@refinio/one.models/lib/api/One.js';
+import { storeVersionedObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
+import { getAllEntries } from '@refinio/one.core/lib/reverse-map-query.js';
 import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
 import type { Person } from '@refinio/one.core/lib/recipes.js';
 import type { Profile } from '@refinio/one.models/src/recipes/Leute/Profile.js';
 import { ErrorCode } from '../types';
+import { InstanceAuthManager, AuthSession } from '../auth/InstanceAuthManager';
 import crypto from 'crypto';
 
-export interface ProfileCreateRequest {
-  nickname: string;  // Using the official Profile nickname field
-  personId: SHA256IdHash<Person>;
-  owner: SHA256IdHash<Person>;
-  profileId?: string;  // Auto-generated if not provided
-  communicationEndpoint?: SHA256Hash<any>[];
-  personDescription?: SHA256Hash<any>[];
+export interface CreateProfileRequest {
+  name: string;
+  email: string;
+  bio?: string;
+  avatar?: string;
+  publicKey?: string;
 }
 
-export interface ProfileUpdateRequest {
-  profileId: string;
-  updates: Partial<{
-    nickname: string;
-    communicationEndpoint: SHA256Hash<any>[];
-    personDescription: SHA256Hash<any>[];
-  }>;
+export interface GetProfileRequest {
+  profileId?: SHA256IdHash;
+  email?: string;
 }
 
-export interface ProfileGetRequest {
-  profileId?: string;
-  nickname?: string;  // Search by nickname instead of alias
+export interface UpdateProfileRequest {
+  profileId: SHA256IdHash;
+  updates: Partial<Profile>;
 }
 
-export interface ProfileListRequest {
-  personId?: SHA256IdHash<Person>;
-  owner?: SHA256IdHash<Person>;
+export interface CreateCredentialRequest {
+  profileId: SHA256IdHash;
+  credentialType: string;
+  claims: any;
+  expiresAt?: number;
 }
 
 export class ProfileHandler {
-  private instance: Instance | null = null;
+  private oneApi: One;
+  private authManager: InstanceAuthManager;
 
-  async initialize(instance: Instance) {
-    this.instance = instance;
+  constructor(oneApi: One, authManager: InstanceAuthManager) {
+    this.oneApi = oneApi;
+    this.authManager = authManager;
   }
 
   /**
-   * Create a new Profile using the official one.models Profile structure
+   * Create a new profile
    */
-  async create(request: ProfileCreateRequest, authPersonId: SHA256IdHash<Person>): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
+  async createProfile(request: CreateProfileRequest, session: AuthSession): Promise<any> {
     try {
-      // Check if nickname already exists
-      const existingProfiles = await getObjectsByType('Profile');
-      const nicknameExists = existingProfiles.some((p: any) => p.nickname === request.nickname);
-      
-      if (nicknameExists) {
+      // Check permissions
+      if (!this.authManager.hasPermission(session, 'write')) {
         throw {
-          code: ErrorCode.CONFLICT,
-          message: `Profile with nickname '${request.nickname}' already exists`
+          code: ErrorCode.FORBIDDEN,
+          message: 'Insufficient permissions to create profile'
         };
       }
 
-      // Generate profileId if not provided
-      const profileId = request.profileId || crypto.randomBytes(16).toString('hex');
-
-      // Create the Profile object using official one.models structure
-      const profile: Profile = {
+      // Create Profile object
+      const profile: Partial<Profile> = {
         $type$: 'Profile',
-        profileId,
-        personId: request.personId,
-        owner: request.owner,
-        nickname: request.nickname,
-        communicationEndpoint: request.communicationEndpoint || [],
-        personDescription: request.personDescription || []
+        nickname: request.name,
+        profileId: crypto.randomUUID(),
+        personId: session.personId,
+        owner: session.personId
       };
 
-      const createdProfile = await createObject(profile);
+      // Store the profile
+      const result = await storeVersionedObject(profile as any);
 
       return {
         success: true,
-        profile: {
-          id: createdProfile.id,
-          ...profile
-        }
+        profileId: result.idHash,
+        hash: result.hash
       };
     } catch (error: any) {
       if (error.code) throw error;
-      
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to create profile: ${error.message}`
       };
     }
   }
 
   /**
-   * Get a Profile by ID or nickname
+   * Get a profile by ID or email
    */
-  async get(request: ProfileGetRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
+  async getProfile(request: GetProfileRequest, session: AuthSession): Promise<any> {
     try {
-      let profile;
+      // Check permissions
+      if (!this.authManager.hasPermission(session, 'read')) {
+        throw {
+          code: ErrorCode.FORBIDDEN,
+          message: 'Insufficient permissions to read profile'
+        };
+      }
 
       if (request.profileId) {
-        // Get by profileId (find Profile with matching profileId field)
-        const profiles = await getObjectsByType('Profile');
-        profile = profiles.find((p: any) => p.profileId === request.profileId);
-      } else if (request.nickname) {
-        // Get by nickname
-        const profiles = await getObjectsByType('Profile');
-        profile = profiles.find((p: any) => p.nickname === request.nickname);
+        // Get by ID
+        const profile = await this.oneApi.data().getLatestVersion(request.profileId);
+        return {
+          success: true,
+          profile
+        };
+      } else if (request.email) {
+        // Search by email would require reverse maps or indexing
+        // For now, return an error
+        throw {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: 'Search by email not yet implemented'
+        };
       } else {
         throw {
           code: ErrorCode.VALIDATION_ERROR,
-          message: 'Must provide either profileId or nickname'
+          message: 'Must provide profileId or email'
         };
       }
-
-      if (!profile) {
-        throw {
-          code: ErrorCode.NOT_FOUND,
-          message: 'Profile not found'
-        };
-      }
-
-      return {
-        success: true,
-        profile
-      };
     } catch (error: any) {
       if (error.code) throw error;
-      
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to get profile: ${error.message}`
       };
     }
   }
 
   /**
-   * Update a Profile
+   * Update an existing profile
    */
-  async update(request: ProfileUpdateRequest, authPersonId: SHA256IdHash<Person>): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
+  async updateProfile(request: UpdateProfileRequest, session: AuthSession): Promise<any> {
     try {
-      // Find the existing profile by profileId
-      const profiles = await getObjectsByType('Profile');
-      const existingProfile = profiles.find((p: any) => p.profileId === request.profileId);
-      
-      if (!existingProfile) {
-        throw {
-          code: ErrorCode.NOT_FOUND,
-          message: 'Profile not found'
-        };
-      }
-
-      // Check ownership (can update if you're the owner or the personId)
-      if (existingProfile.personId !== authPersonId && existingProfile.owner !== authPersonId) {
+      // Check permissions
+      if (!this.authManager.hasPermission(session, 'write')) {
         throw {
           code: ErrorCode.FORBIDDEN,
-          message: 'Not authorized to update this profile'
+          message: 'Insufficient permissions to update profile'
         };
       }
 
-      // Check if new nickname conflicts
-      if (request.updates.nickname && request.updates.nickname !== existingProfile.nickname) {
-        const nicknameExists = profiles.some((p: any) => 
-          p.nickname === request.updates.nickname && p.profileId !== request.profileId
-        );
-        
-        if (nicknameExists) {
-          throw {
-            code: ErrorCode.CONFLICT,
-            message: `Profile with nickname '${request.updates.nickname}' already exists`
-          };
-        }
-      }
+      // Get current profile
+      const currentProfile = await this.oneApi.data().getLatestVersion(request.profileId);
 
-      // Merge updates with existing profile
-      const updatedProfile: Profile = {
-        ...existingProfile,
-        ...request.updates
-      };
-
-      // Update the object (need to get the ONE object hash)
-      const objectHash = existingProfile._hash || existingProfile.id; // Assuming the hash is available
-      await updateObject(objectHash as SHA256Hash, updatedProfile);
-
-      return {
-        success: true,
-        profile: updatedProfile
-      };
-    } catch (error: any) {
-      if (error.code) throw error;
-      
-      throw {
-        code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
-      };
-    }
-  }
-
-  /**
-   * Delete a Profile
-   */
-  async delete(profileId: string, authPersonId: SHA256IdHash<Person>): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
-    try {
-      // Find the profile to check ownership
-      const profiles = await getObjectsByType('Profile');
-      const profile = profiles.find((p: any) => p.profileId === profileId);
-      
-      if (!profile) {
-        throw {
-          code: ErrorCode.NOT_FOUND,
-          message: 'Profile not found'
-        };
-      }
-
-      // Check ownership (can delete if you're the owner or the personId)
-      if (profile.personId !== authPersonId && profile.owner !== authPersonId) {
+      // Check ownership or admin permission
+      if (!session.isOwner && !this.authManager.hasPermission(session, 'admin')) {
         throw {
           code: ErrorCode.FORBIDDEN,
-          message: 'Not authorized to delete this profile'
+          message: 'Can only update your own profile'
         };
       }
 
-      // Delete the Profile object
-      const objectHash = profile._hash || profile.id;
-      await deleteObject(objectHash as SHA256Hash);
+      // Merge updates
+      const updatedProfile = {
+        ...currentProfile,
+        ...request.updates,
+        $type$: 'Profile',
+        updatedAt: new Date().toISOString()
+      };
+
+      // Store new version
+      const result = await storeVersionedObject(updatedProfile as any);
 
       return {
         success: true,
-        message: 'Profile deleted successfully'
+        profileId: result.idHash,
+        hash: result.hash
       };
     } catch (error: any) {
       if (error.code) throw error;
-      
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to update profile: ${error.message}`
       };
     }
   }
 
   /**
-   * List Profiles
+   * Delete a profile (mark as deleted)
    */
-  async list(request: ProfileListRequest): Promise<any> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
+  async deleteProfile(profileId: SHA256IdHash, session: AuthSession): Promise<any> {
     try {
-      let profiles = await getObjectsByType('Profile');
-
-      // Filter by personId if provided
-      if (request.personId) {
-        profiles = profiles.filter((p: any) => p.personId === request.personId);
+      // Check permissions
+      if (!this.authManager.hasPermission(session, 'admin')) {
+        throw {
+          code: ErrorCode.FORBIDDEN,
+          message: 'Only admins can delete profiles'
+        };
       }
 
-      // Filter by owner if provided
-      if (request.owner) {
-        profiles = profiles.filter((p: any) => p.owner === request.owner);
-      }
+      // Get current profile
+      const currentProfile = await this.oneApi.data().getLatestVersion(profileId);
 
-      // Sort by nickname for consistent ordering
-      profiles.sort((a: any, b: any) => {
-        const aName = a.nickname || a.profileId;
-        const bName = b.nickname || b.profileId;
-        return aName.localeCompare(bName);
-      });
+      // Create deleted version
+      const deletedProfile = {
+        ...currentProfile,
+        $type$: 'Profile',
+        deleted: true,
+        deletedAt: new Date().toISOString(),
+        deletedBy: session.personId
+      };
+
+      // Store deleted version
+      const result = await storeVersionedObject(deletedProfile as any);
 
       return {
         success: true,
-        count: profiles.length,
-        profiles: profiles.map((p: any) => ({
-          id: p.id || p._hash,  // ONE object hash
-          profileId: p.profileId,
-          nickname: p.nickname,
-          personId: p.personId,
-          owner: p.owner,
-          communicationEndpoint: p.communicationEndpoint,
-          personDescription: p.personDescription
-        }))
+        profileId: result.idHash,
+        hash: result.hash
       };
     } catch (error: any) {
+      if (error.code) throw error;
       throw {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message
+        message: `Failed to delete profile: ${error.message}`
       };
     }
   }
 
   /**
-   * Get Profile by nickname (convenience method)
+   * List all profiles (requires admin)
    */
-  async getByNickname(nickname: string): Promise<Profile | null> {
-    if (!this.instance) {
-      throw new Error('Handler not initialized');
-    }
-
+  async listProfiles(session: AuthSession): Promise<any> {
     try {
-      const profiles = await getObjectsByType('Profile');
-      return profiles.find((p: any) => p.nickname === nickname) || null;
-    } catch (error) {
-      return null;
+      // Check permissions
+      if (!this.authManager.hasPermission(session, 'admin')) {
+        throw {
+          code: ErrorCode.FORBIDDEN,
+          message: 'Only admins can list all profiles'
+        };
+      }
+
+      // This would require proper reverse map setup
+      // For now, return empty list
+      return {
+        success: true,
+        profiles: [],
+        message: 'Profile listing requires reverse map configuration'
+      };
+    } catch (error: any) {
+      if (error.code) throw error;
+      throw {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: `Failed to list profiles: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Create a verifiable credential for a profile
+   */
+  async createCredential(request: CreateCredentialRequest, session: AuthSession): Promise<any> {
+    try {
+      // Check permissions
+      if (!this.authManager.hasPermission(session, 'admin')) {
+        throw {
+          code: ErrorCode.FORBIDDEN,
+          message: 'Only admins can issue credentials'
+        };
+      }
+
+      const credential = {
+        $type$: 'ProfileCredential',
+        profileId: request.profileId,
+        credentialType: request.credentialType,
+        claims: request.claims,
+        issuer: session.personId,
+        issuedAt: new Date().toISOString(),
+        expiresAt: request.expiresAt || Date.now() + (365 * 24 * 60 * 60 * 1000) // 1 year default
+      };
+
+      // Store credential
+      const result = await storeVersionedObject(credential as any);
+
+      return {
+        success: true,
+        credentialId: result.idHash,
+        hash: result.hash
+      };
+    } catch (error: any) {
+      if (error.code) throw error;
+      throw {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: `Failed to create credential: ${error.message}`
+      };
     }
   }
 }

@@ -1,118 +1,109 @@
-import { Recipe } from '@refinio/one.core';
+import type { Recipe } from '@refinio/one.core/lib/recipes.js';
 
 /**
  * Profile Recipe for ONE platform
  * Profiles are stored as ONE objects in the instance
  */
 export const ProfileRecipe: Recipe = {
-  $type$: 'Profile',
-  $recipe$: 'Recipe',
-  description: 'User profile with access credentials',
-  properties: {
-    $type$: { 
-      type: 'const', 
-      value: 'Profile' 
+  $type$: 'Recipe',
+  name: 'Profile',
+  rule: [
+    {
+      itemprop: 'profileId',
+      itemtype: { type: 'string' },
+      isId: true
     },
-    alias: { 
-      type: 'string', 
-      required: true,
-      unique: true,
-      description: 'Unique profile alias for quick access'
+    {
+      itemprop: 'personId',
+      itemtype: { 
+        type: 'referenceToId', 
+        allowedTypes: new Set(['Person']) 
+      },
+      isId: true
     },
-    personId: { 
-      type: 'SHA256Hash', 
-      required: true,
-      description: 'Person ID this profile belongs to'
+    {
+      itemprop: 'owner',
+      itemtype: { 
+        type: 'referenceToId', 
+        allowedTypes: new Set(['Person']) 
+      },
+      isId: true
     },
-    instanceUrl: {
-      type: 'string',
-      required: true,
-      format: 'url',
-      description: 'QUIC URL of the ONE instance'
+    {
+      itemprop: 'nickname',
+      itemtype: { type: 'string' },
+      optional: true
     },
-    instanceId: {
-      type: 'SHA256Hash',
-      required: false,
-      description: 'Instance ID (discovered on first connect)'
-    },
-    displayName: { 
-      type: 'string', 
-      required: true,
-      description: 'Display name for the profile'
-    },
-    description: {
-      type: 'string',
-      required: false,
-      maxLength: 500,
-      description: 'Profile description'
-    },
-    permissions: {
-      type: 'array',
-      items: { type: 'string' },
-      required: false,
-      description: 'Granted permissions for this profile'
-    },
-    metadata: {
-      type: 'object',
-      required: false,
-      properties: {
-        createdAt: { type: 'number' },
-        lastUsed: { type: 'number' },
-        lastModified: { type: 'number' },
-        tags: { 
-          type: 'array',
-          items: { type: 'string' }
+    {
+      itemprop: 'communicationEndpoint',
+      itemtype: {
+        type: 'bag',
+        item: {
+          type: 'referenceToObj',
+          allowedTypes: new Set(['*'])
         }
-      }
+      },
+      optional: true
     },
-    settings: {
-      type: 'object',
-      required: false,
-      description: 'Profile-specific settings',
-      properties: {
-        theme: { type: 'string' },
-        language: { type: 'string' },
-        timezone: { type: 'string' }
-      }
+    {
+      itemprop: 'personDescription',
+      itemtype: {
+        type: 'bag',
+        item: {
+          type: 'referenceToObj',
+          allowedTypes: new Set(['*'])
+        }
+      },
+      optional: true
     }
-  }
+  ]
 };
 
 /**
- * ProfileCredential Recipe - Encrypted credentials linked to a Profile
- * Stored separately for security
+ * ProfileCredential Recipe
+ * Verifiable credentials for profiles
  */
 export const ProfileCredentialRecipe: Recipe = {
-  $type$: 'ProfileCredential',
-  $recipe$: 'Recipe',
-  description: 'Encrypted credentials for a Profile',
-  properties: {
-    $type$: { 
-      type: 'const', 
-      value: 'ProfileCredential' 
+  $type$: 'Recipe',
+  name: 'ProfileCredential',
+  rule: [
+    {
+      itemprop: 'profileId',
+      itemtype: { 
+        type: 'referenceToId', 
+        allowedTypes: new Set(['Profile']) 
+      },
+      isId: true
     },
-    profileId: {
-      type: 'SHA256Hash',
-      required: true,
-      description: 'Reference to the Profile'
+    {
+      itemprop: 'credentialType',
+      itemtype: { type: 'string' },
+      isId: true
     },
-    encryptedKeys: {
-      type: 'string',
-      required: true,
-      format: 'base64',
-      description: 'Encrypted Person keys'
+    {
+      itemprop: 'claims',
+      itemtype: { type: 'stringifiable' }
     },
-    salt: {
-      type: 'string',
-      required: true,
-      format: 'base64',
-      description: 'Salt for key derivation'
+    {
+      itemprop: 'issuer',
+      itemtype: { 
+        type: 'referenceToId', 
+        allowedTypes: new Set(['Person']) 
+      }
     },
-    algorithm: {
-      type: 'string',
-      required: true,
-      default: 'xchacha20poly1305',
-      description: 'Encryption algorithm used'
+    {
+      itemprop: 'issuedAt',
+      itemtype: { type: 'string' }
+    },
+    {
+      itemprop: 'expiresAt',
+      itemtype: { type: 'number' },
+      optional: true
+    },
+    {
+      itemprop: 'signature',
+      itemtype: { type: 'string' },
+      optional: true
     }
-  }
+  ]
 };
