@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import { ClientIdentityCredential } from '../types';
+import { ClientIdentityCredential } from '../types.js';
 
 export interface AuthConfig {
   credentialStore: string;

@@ -4,13 +4,13 @@ import { setBaseDirOrName } from '@refinio/one.core/lib/system/storage-base.js';
 import { getQuicTransport } from '@refinio/one.core/lib/system/quic-transport.js';
 import { createRandomString } from '@refinio/one.core/lib/system/crypto-helpers.js';
 import One from '@refinio/one.models/lib/api/One.js';
-import { QuicVCServer } from './server/QuicVCServer';
-import { InstanceAuthManager } from './auth/InstanceAuthManager';
-import { ObjectHandler } from './handlers/ObjectHandler';
-import { RecipeHandler } from './handlers/RecipeHandler';
-import { ProfileHandler } from './handlers/ProfileHandler';
-import { loadConfig } from './config';
-import { ProfileRecipe, ProfileCredentialRecipe } from './recipes/ProfileRecipe';
+import { QuicVCServer } from './server/QuicVCServer.js';
+import { InstanceAuthManager } from './auth/InstanceAuthManager.js';
+import { ObjectHandler } from './handlers/ObjectHandler.js';
+import { RecipeHandler } from './handlers/RecipeHandler.js';
+import { ProfileHandler } from './handlers/ProfileHandler.js';
+import { loadConfig } from './config.js';
+import { ProfileRecipe, ProfileCredentialRecipe } from './recipes/ProfileRecipe.js';
 
 export async function startApiServer() {
   const config = await loadConfig();
@@ -91,6 +91,12 @@ export async function startApiServer() {
   return { server, oneApi, instanceIdHash };
 }
 
-if (require.main === module) {
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+if (import.meta.url === `file://${process.argv[1]}`) {
   startApiServer().catch(console.error);
 }

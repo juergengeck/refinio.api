@@ -4,7 +4,7 @@ import { storeVersionedObject, getObjectByIdHash } from '@refinio/one.core/lib/s
 import { storeUnversionedObject, getObject } from '@refinio/one.core/lib/storage-unversioned-objects.js';
 import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
 import type { OneObjectTypes, OneVersionedObjectTypes, OneUnversionedObjectTypes } from '@refinio/one.core/lib/recipes.js';
-import { ErrorCode } from '../types';
+import { ErrorCode } from '../types.js';
 
 export interface CreateRequest {
   type: string;

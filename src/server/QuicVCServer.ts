@@ -1,11 +1,11 @@
 import { EventEmitter } from 'events';
 import type { QuicTransport } from '@refinio/one.core/lib/system/quic-transport.js';
 import { getInstanceIdHash } from '@refinio/one.core/lib/instance.js';
-import { InstanceAuthManager, AuthSession } from '../auth/InstanceAuthManager';
-import { ObjectHandler } from '../handlers/ObjectHandler';
-import { RecipeHandler } from '../handlers/RecipeHandler';
-import { ProfileHandler } from '../handlers/ProfileHandler';
-import { MessageType, Message, ErrorCode } from '../types';
+import { InstanceAuthManager, AuthSession } from '../auth/InstanceAuthManager.js';
+import { ObjectHandler } from '../handlers/ObjectHandler.js';
+import { RecipeHandler } from '../handlers/RecipeHandler.js';
+import { ProfileHandler } from '../handlers/ProfileHandler.js';
+import { MessageType, Message, ErrorCode } from '../types.js';
 import crypto from 'crypto';
 
 export interface QuicVCServerOptions {

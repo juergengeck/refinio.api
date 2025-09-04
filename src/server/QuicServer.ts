@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import crypto from 'crypto';
-import { CredentialManager } from '../auth/CredentialManager';
-import { MessageType, Message, ErrorCode } from '../types';
+import { CredentialManager } from '../auth/CredentialManager.js';
+import { MessageType, Message, ErrorCode } from '../types.js';
 
 export interface QuicServerOptions {
   port: number;
@@ -25,7 +25,7 @@ export class QuicServer extends EventEmitter {
 
   async start() {
     // Create UDP socket for QUIC
-    const dgram = require('dgram');
+    const dgram = await import('dgram');
     this.server = dgram.createSocket('udp4');
     
     this.server.on('message', async (msg: Buffer, rinfo: any) => {

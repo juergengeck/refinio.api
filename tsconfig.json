@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "ESNext",
     "lib": ["ES2022"],
     "outDir": "./dist",
     "strict": true,
@@ -12,16 +12,9 @@
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node",
-    "types": ["node", "jest"],
-    "paths": {
-      "@refinio/one.core/*": ["../one.core/*"],
-      "@refinio/one.models/*": ["../one.models/*"],
-      "@refinio/one.trust/*": ["../one.trust/*"],
-      "@refinio/one.discovery/*": ["../one.discovery/*"],
-      "@refinio/one.knowledge/*": ["../one.knowledge/*"],
-      "@refinio/one.verifiable/*": ["../one.verifiable/*"]
-    }
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "types": ["node", "jest"]
   },
   "include": ["src/**/*", "@OneObjectInterfaces.d.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]

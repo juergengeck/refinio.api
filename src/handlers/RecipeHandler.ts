@@ -2,7 +2,7 @@ import '@refinio/one.core/lib/system/load-nodejs.js';
 import { registerRecipes } from '@refinio/one.core/lib/instance.js';
 import { getRecipe, hasRecipe, addRecipeToRuntime } from '@refinio/one.core/lib/object-recipes.js';
 import type { Recipe } from '@refinio/one.core/lib/recipes.js';
-import { ErrorCode } from '../types';
+import { ErrorCode } from '../types.js';
 
 export interface RecipeRegisterRequest {
   recipe: Recipe;  // Recipe object
