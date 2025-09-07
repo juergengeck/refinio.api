@@ -10,7 +10,11 @@ import { ObjectHandler } from './handlers/ObjectHandler.js';
 import { RecipeHandler } from './handlers/RecipeHandler.js';
 import { ProfileHandler } from './handlers/ProfileHandler.js';
 import { loadConfig } from './config.js';
-import { ProfileRecipe, ProfileCredentialRecipe } from './recipes/ProfileRecipe.js';
+import { StateEntryRecipe, AppStateJournalRecipe } from './state/AppStateRecipes.js';
+
+// Export state management components
+export { AppStateModel, StateEntryRecipe, AppStateJournalRecipe } from './state/index.js';
+export type { StateEntry, AppStateJournal } from './state/index.js';
 
 export async function startApiServer() {
   const config = await loadConfig();
@@ -26,7 +30,7 @@ export async function startApiServer() {
     secret: config.instance.secret || await createRandomString(32),
     directory: storageDir,
     encryptStorage: config.instance.encryptStorage !== false,
-    initialRecipes: [ProfileRecipe, ProfileCredentialRecipe]
+    initialRecipes: [StateEntryRecipe, AppStateJournalRecipe]
   };
   
   await initInstance(instanceOptions);

@@ -12,10 +12,10 @@
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*", "@OneObjectInterfaces.d.ts"],
+  "include": ["@OneObjectInterfaces.d.ts", "src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
