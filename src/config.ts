@@ -34,7 +34,7 @@ const defaultConfig: ServerConfig = {
     email: 'admin@refinio.local',
     secret: '', // Must be provided via config or env
     directory: path.join(os.homedir(), '.refinio', 'instance'),
-    encryptStorage: true
+    encryptStorage: false // Encryption not supported on all platforms yet
   },
   permissions: {
     defaultPermissions: ['read'],
@@ -84,7 +84,11 @@ export async function loadConfig(): Promise<ServerConfig> {
   if (process.env.REFINIO_INSTANCE_DIRECTORY) {
     envConfig.instance.directory = process.env.REFINIO_INSTANCE_DIRECTORY;
   }
-  
+
+  if (process.env.REFINIO_ENCRYPT_STORAGE !== undefined) {
+    envConfig.instance.encryptStorage = process.env.REFINIO_ENCRYPT_STORAGE === 'true';
+  }
+
   if (process.env.REFINIO_LOG_LEVEL) {
     envConfig.logging.level = process.env.REFINIO_LOG_LEVEL as any;
   }

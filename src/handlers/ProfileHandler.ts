@@ -4,7 +4,7 @@ import { storeVersionedObject, getObjectByIdHash } from '@refinio/one.core/lib/s
 import { getAllEntries } from '@refinio/one.core/lib/reverse-map-query.js';
 import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
 import type { Person } from '@refinio/one.core/lib/recipes.js';
-import type { Profile } from '@refinio/one.models/src/recipes/Leute/Profile.js';
+import type { Profile } from '@refinio/one.models/lib/recipes/Leute/Profile.js';
 import { ErrorCode } from '../types.js';
 import { InstanceAuthManager, AuthSession } from '../auth/InstanceAuthManager.js';
 import crypto from 'crypto';

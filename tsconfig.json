@@ -14,7 +14,7 @@
     "resolveJsonModule": true,
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
-    "types": ["node", "jest"]
+    "types": ["node"]
   },
   "include": ["@OneObjectInterfaces.d.ts", "src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
