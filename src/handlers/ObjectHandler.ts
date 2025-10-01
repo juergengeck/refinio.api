@@ -1,5 +1,5 @@
 import '@refinio/one.core/lib/system/load-nodejs.js';
-import type One from '@refinio/one.models/lib/api/One.js';
+import type ChannelManager from '@refinio/one.models/lib/models/ChannelManager.js';
 import { storeVersionedObject, getObjectByIdHash } from '@refinio/one.core/lib/storage-versioned-objects.js';
 import { storeUnversionedObject, getObject } from '@refinio/one.core/lib/storage-unversioned-objects.js';
 import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
@@ -33,10 +33,10 @@ export interface QueryRequest {
 }
 
 export class ObjectHandler {
-  private oneApi: One;
+  private channelManager: ChannelManager;
 
-  constructor(oneApi: One) {
-    this.oneApi = oneApi;
+  constructor(channelManager: ChannelManager) {
+    this.channelManager = channelManager;
   }
 
   /**
@@ -114,8 +114,9 @@ export class ObjectHandler {
   async update(request: UpdateRequest): Promise<any> {
     try {
       // Get current version
-      const current = await this.oneApi.data().getLatestVersion(request.idHash as SHA256IdHash);
-      
+      const currentResult = await getObjectByIdHash(request.idHash as SHA256IdHash);
+      const current = currentResult.obj;
+
       // Merge with new data
       const updated = {
         ...current,

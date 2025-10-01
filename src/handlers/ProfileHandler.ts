@@ -1,6 +1,6 @@
 import '@refinio/one.core/lib/system/load-nodejs.js';
-import type One from '@refinio/one.models/lib/api/One.js';
-import { storeVersionedObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
+import type LeuteModel from '@refinio/one.models/lib/models/Leute/LeuteModel.js';
+import { storeVersionedObject, getObjectByIdHash } from '@refinio/one.core/lib/storage-versioned-objects.js';
 import { getAllEntries } from '@refinio/one.core/lib/reverse-map-query.js';
 import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
 import type { Person } from '@refinio/one.core/lib/recipes.js';
@@ -35,11 +35,11 @@ export interface CreateCredentialRequest {
 }
 
 export class ProfileHandler {
-  private oneApi: One;
+  private leuteModel: LeuteModel;
   private authManager: InstanceAuthManager;
 
-  constructor(oneApi: One, authManager: InstanceAuthManager) {
-    this.oneApi = oneApi;
+  constructor(leuteModel: LeuteModel, authManager: InstanceAuthManager) {
+    this.leuteModel = leuteModel;
     this.authManager = authManager;
   }
 
@@ -97,7 +97,8 @@ export class ProfileHandler {
 
       if (request.profileId) {
         // Get by ID
-        const profile = await this.oneApi.data().getLatestVersion(request.profileId);
+        const result = await getObjectByIdHash(request.profileId);
+        const profile = result.obj;
         return {
           success: true,
           profile
@@ -138,7 +139,8 @@ export class ProfileHandler {
       }
 
       // Get current profile
-      const currentProfile = await this.oneApi.data().getLatestVersion(request.profileId);
+      const currentProfileResult = await getObjectByIdHash(request.profileId);
+      const currentProfile = currentProfileResult.obj;
 
       // Check ownership or admin permission
       if (!session.isOwner && !this.authManager.hasPermission(session, 'admin')) {
@@ -187,7 +189,8 @@ export class ProfileHandler {
       }
 
       // Get current profile
-      const currentProfile = await this.oneApi.data().getLatestVersion(profileId);
+      const deletedProfileResult = await getObjectByIdHash(profileId);
+      const currentProfile = deletedProfileResult.obj;
 
       // Create deleted version
       const deletedProfile = {
