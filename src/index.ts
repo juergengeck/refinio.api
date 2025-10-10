@@ -83,18 +83,41 @@ export async function startApiServer() {
   const authManager = new InstanceAuthManager();
 
   // Initialize models directly (like Replicant does)
-  const { LeuteModel, ChannelManager } = await import('@refinio/one.models/lib/models/index.js');
-  const leuteModel = new LeuteModel('wss://comm10.dev.refinio.one', true);
+  const { LeuteModel, ChannelManager, ConnectionsModel } = await import('@refinio/one.models/lib/models/index.js');
+
+  // Default to public server (can be overridden via config file)
+  const commServerUrl = config.instance.commServerUrl || 'wss://comm10.dev.refinio.one';
+  console.log(`Using comm server: ${commServerUrl}`);
+
+  const leuteModel = new LeuteModel(commServerUrl, true);
   const channelManager = new ChannelManager(leuteModel);
+  const connectionsModel = new ConnectionsModel(leuteModel, {
+    commServerUrl: commServerUrl,
+    acceptIncomingConnections: false,  // Client only makes outgoing connections via invites
+    acceptUnknownInstances: false,  // Client doesn't accept unknown instances
+    acceptUnknownPersons: false,  // Client doesn't accept unknown persons
+    allowPairing: true,  // REQUIRED to accept invitations and trigger onPairingSuccess callbacks
+    allowDebugRequests: false,
+    pairingTokenExpirationDuration: 3600000,
+    establishOutgoingConnections: true,
+    noImport: false,
+    noExport: false
+  });
 
   await leuteModel.init();
+  console.log('✅ LeuteModel initialized');
   await channelManager.init();
+  console.log('✅ ChannelManager initialized');
+  await connectionsModel.init();
+  console.log('✅ ConnectionsModel initialized - listening on CommServer:', commServerUrl);
 
   // Initialize handlers with the appropriate models
   const objectHandler = new ObjectHandler(channelManager);
   const recipeHandler = new RecipeHandler();
   const profileHandler = new ProfileHandler(leuteModel, authManager);
-  
+  const { ConnectionHandler } = await import('./handlers/ConnectionHandler.js');
+  const connectionHandler = new ConnectionHandler(leuteModel, connectionsModel, channelManager);
+
   // Create QUICVC server using one.core's transport
   const server = new QuicVCServer({
     quicTransport,
@@ -102,7 +125,8 @@ export async function startApiServer() {
     handlers: {
       object: objectHandler,
       recipe: recipeHandler,
-      profile: profileHandler
+      profile: profileHandler,
+      connectionHandler
     },
     config: {
       port: config.server.port,
@@ -113,24 +137,38 @@ export async function startApiServer() {
   await server.start();
   console.log(`Refinio API server listening on ${config.server.host}:${config.server.port}`);
   console.log(`Instance: ${instanceOptions.name} (${instanceOptions.email})`);
-  
+
+  // Also start HTTP REST server for refinio.cli compatibility
+  const { HttpRestServer } = await import('./server/HttpRestServer.js');
+  const httpPort = parseInt(process.env.REFINIO_API_PORT || config.server.port.toString());
+  const httpServer = new HttpRestServer(connectionHandler, leuteModel, httpPort);
+  await httpServer.start();
+
+  console.log(`HTTP REST API listening on port ${httpPort}`);
+
   // Graceful shutdown
   process.on('SIGINT', async () => {
     console.log('\nShutting down API server...');
+    await httpServer.stop();
     await server.stop();
     closeInstance();
     process.exit(0);
   });
 
-  return { server, channelManager, leuteModel, instanceIdHash };
+  return { server, httpServer, channelManager, leuteModel, connectionsModel, instanceIdHash };
 }
 
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { resolve } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Cross-platform entry point detection
+// Compare resolved absolute paths instead of URLs to handle Windows backslashes
+const isMainModule = __filename === resolve(process.argv[1]);
+
+if (isMainModule) {
   startApiServer().catch(console.error);
 }
