@@ -10,18 +10,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Build and Development
 ```bash
-npm run build          # Compile TypeScript to dist/
-npm run dev            # Build in watch mode
-npm start              # Start the API server (node dist/index.js)
-npm test               # Run tests with Jest
+npm run build                    # Compile TypeScript to dist/
+npm run dev                      # Build in watch mode
+npm start                        # Start the API server (node dist/index.js)
+npm test                         # Run tests with Jest
+npm run test:integration         # Run integration tests (requires electron-app running)
 ```
 
 ### Configuration
-The server uses configuration from:
-1. `refinio-api.config.json` (current directory)
-2. `~/.refinio/api.config.json` (user home)
-3. `/etc/refinio/api.config.json` (system)
-4. Environment variables (see src/config.ts:68-94)
+The server uses configuration from (in order of precedence):
+1. Environment variables (highest priority)
+2. `refinio-api.config.json` (current directory)
+3. `~/.refinio/api.config.json` (user home)
+4. `/etc/refinio/api.config.json` (system)
+5. Default values in src/config.ts
+
+**Important Environment Variables**:
+- `REFINIO_API_PORT` - Server port (default: 49498)
+- `REFINIO_API_HOST` - Server bind address (default: 0.0.0.0)
+- `REFINIO_INSTANCE_DIRECTORY` - Storage directory (default: ~/.refinio/instance)
+- `REFINIO_INSTANCE_SECRET` - Instance secret (required)
+- `REFINIO_INSTANCE_EMAIL` - Instance owner email
+- `REFINIO_COMM_SERVER_URL` - CommServer URL (default: wss://comm10.dev.refinio.one)
+- `REFINIO_ENCRYPT_STORAGE` - Enable storage encryption (default: false)
+- `REFINIO_FILER_MOUNT_POINT` - Filesystem mount point (optional)
+- `REFINIO_FILER_INVITE_URL_PREFIX` - Invite URL prefix (optional)
+- `REFINIO_LOG_LEVEL` - Logging level: debug|info|warn|error
 
 ## Architecture
 
@@ -31,7 +45,7 @@ The server uses configuration from:
 - **Transport**: QUIC-based transport with WebSocket fallback (QuicVCServer)
 - **Module System**: ESM modules (`"type": "module"` in package.json)
 
-### Initialization Flow (src/index.ts:19-126)
+### Initialization Flow (src/index.ts:19-191)
 1. Load configuration from files or environment variables
 2. Set storage directory via `setBaseDirOrName()`
 3. Import recipes from:
@@ -40,10 +54,12 @@ The server uses configuration from:
    - `@refinio/one.models/lib/recipes/recipes-experimental.js`
    - Custom recipes: StateEntryRecipe, AppStateJournalRecipe
 4. Initialize ONE.core instance with `initInstance()` - creates or loads Instance
-5. Initialize LeuteModel and ChannelManager from one.models
-6. Create handlers: ObjectHandler, RecipeHandler, ProfileHandler
+5. Initialize LeuteModel, ChannelManager, and ConnectionsModel from one.models
+6. Create handlers: ObjectHandler, RecipeHandler, ProfileHandler, ConnectionHandler
 7. Create QuicVCServer with one.core's QUIC transport
-8. Start server listening on configured port
+8. Create HttpRestServer for REST API endpoints (port from config)
+9. Optionally mount filesystem via IFileSystemAdapter (if config.filer.mountPoint set)
+10. Start both servers listening on configured ports
 
 ### Authentication Architecture (src/auth/InstanceAuthManager.ts)
 - **Challenge-Response**: Server generates cryptographic challenge, client signs with Person key
@@ -71,11 +87,31 @@ All handlers follow similar patterns:
 - Recipes are self-describing: every Recipe has `$type$: 'Recipe'`
 - Hierarchical: recipes can define other recipes
 
-### QUIC Server Implementation (src/server/QuicVCServer.ts)
+**ConnectionHandler** (src/handlers/ConnectionHandler.ts)
+- Manages connections between ONE instances
+- Uses one.models `ConnectionsModel` for connection establishment
+- Contacts are created automatically when connections succeed (bidirectional)
+- Contacts accessed via `LeuteModel.others()` returning `SomeoneModel[]`
+- Connection flow: create invite → accept invite → establish connection → auto-create contacts
+
+### Server Architecture
+
+**QuicVCServer** (src/server/QuicVCServer.ts)
 - Uses one.core's QuicTransport (WebSocket-based in current implementation)
 - Message-based protocol: all messages are JSON with id, type, timestamp, payload
 - Session tracking per connection ID
-- Handlers dispatch based on MessageType enum (src/types.ts:8-34)
+- Handlers dispatch based on MessageType enum (src/types.ts)
+- Requires authentication before handling CRUD/recipe operations
+
+**HttpRestServer** (src/server/HttpRestServer.ts)
+- Provides REST API endpoints for connection management
+- Runs on same port as QUIC server (configurable via REFINIO_API_PORT)
+- Key endpoints:
+  - `POST /api/connections/invite` - Accept invitation and establish connection
+  - `GET /api/connections` - List active connections
+  - `GET /api/contacts` - List contacts (via LeuteModel.others())
+  - `GET /health` - Health check endpoint
+- CORS enabled for cross-origin requests
 
 ### State Management (src/state/)
 **AppStateModel**: CRDT-based state synchronization between browser and Node.js instances
@@ -149,9 +185,10 @@ interface Message {
 - `registerRecipes()` - Add custom recipes
 
 ### ONE.models Key Classes
-- `LeuteModel` - Person/Profile management
+- `LeuteModel` - Person/Profile management, contact access via `.others()`
 - `ChannelManager` - CHUM channel communication
-- Both require `.init()` before use (src/index.ts:90-91)
+- `ConnectionsModel` - Instance-to-instance connection management, pairing invites
+- All require `.init()` before use (src/index.ts:107-109)
 
 ## Common Tasks
 
@@ -168,18 +205,202 @@ interface Message {
 3. Add to `initialRecipes` array in src/index.ts:60
 4. If extending ONE object types, declare in @OneObjectInterfaces.d.ts
 
-### Testing the Server
-Currently no test suite exists. Manual testing:
-1. Configure refinio-api.config.json
+### Testing and Debugging
+
+**Integration Tests** (test/integration/connection-test.js):
+- Tests complete connection flow between refinio.api and electron-app
+- Verifies bidirectional contact creation
+- Requires electron-app to be available in parent directory
+- Run with: `npm run test:integration`
+
+**Manual Testing**:
+1. Configure refinio-api.config.json or set environment variables
 2. `npm run build && npm start`
-3. Connect with client (e.g., refinio-cli if available)
-4. Send JSON messages over QUIC connection
+3. Test REST endpoints:
+   ```bash
+   # Health check
+   curl http://localhost:49498/health
+
+   # List contacts
+   curl http://localhost:49498/api/contacts
+
+   # Accept invitation
+   curl -X POST http://localhost:49498/api/connections/invite \
+     -H "Content-Type: application/json" \
+     -d '{"inviteUrl": "https://one.refinio.net/invite#..."}'
+   ```
+4. Test QUIC WebSocket connection with ws library or WebSocket client
+
+**Debugging Connection Issues**:
+- Check `REFINIO_COMM_SERVER_URL` is correct and accessible
+- Verify `allowPairing: true` in ConnectionsModel config
+- Look for "onPairingSuccess callback fired" log messages
+- Query contacts after connection: `await leuteModel.others()`
+- Check network connectivity to CommServer
+
+## ConnectionsModel Configuration (src/index.ts:94-105)
+
+The ConnectionsModel is initialized with specific settings:
+- `commServerUrl` - Communication server URL (default: wss://comm10.dev.refinio.one, override via REFINIO_COMM_SERVER_URL)
+- `allowPairing: true` - **CRITICAL**: Required to accept invitations and trigger onPairingSuccess callbacks
+- `acceptIncomingConnections: false` - Client only makes outgoing connections via invites
+- `acceptUnknownInstances: false` - Only accept known instances
+- `acceptUnknownPersons: false` - Only accept known persons
+- `establishOutgoingConnections: true` - Can initiate connections
+- `pairingTokenExpirationDuration: 3600000` - 1 hour token validity
+- `noImport: false` / `noExport: false` - Enable data import/export
+
+## Filesystem Integration (Optional)
+
+The API server can optionally mount a virtual filesystem using ProjFS (Windows) or FUSE (Linux/Mac):
+
+### Configuration (src/config.ts)
+```typescript
+filer: {
+  mountPoint: 'C:\\OneFiler',              // Mount point for filesystem
+  inviteUrlPrefix: 'https://one.refinio.net/invite',  // URL prefix for invite links
+  debug: false                             // Enable debug logging
+}
+```
+
+### Implementation (src/filer/)
+- **IFileSystemAdapter** - Bridges IFileSystem to ProjFS/FUSE
+- **createFilerWithPairing** - Helper to create PairingFileSystem with invite files
+- **PairingFileSystem** - Exposes invite files at `/invites/`:
+  - `iop_invite.txt` / `iop_invite.png` - Internet of People invites
+  - `iom_invite.txt` / `iom_invite.png` - Internet of Me invites
+
+### Mount Process (src/index.ts:150-176)
+1. Import IFileSystemAdapter and createFilerWithPairing
+2. Create filesystem with PairingFileSystem using ConnectionsModel
+3. Create adapter with mount point and filesystem
+4. Call `adapter.mount()` to mount filesystem
+5. Invites become accessible as files in the mounted directory
 
 ## Special Files
 
 - `@OneObjectInterfaces.d.ts` - Augments one.core's object interface registry
 - `src/OneCoreInit.ts` - ONE.core initialization utilities (if needed separately)
 - `lib/` - Compiled JavaScript output (parallel to dist/)
+- `src/helpers/ContactCreationHelper.ts` - Utility for automatic contact creation on connection
+- `src/helpers/AccessRightsHelper.ts` - Utility for granting access rights after pairing
+- `src/state/AppStateRecipes.ts` - Custom recipes for state synchronization
+
+## Connection Establishment Flow
+
+### Invitation-Based Pairing (src/handlers/ConnectionHandler.ts)
+
+**Key Pattern**: Use callback registration BEFORE calling `connectUsingInvitation()`
+
+```typescript
+// 1. Create promise that resolves when pairing succeeds
+const pairingPromise = new Promise((resolve, reject) => {
+  // 2. Register callback FIRST (before initiating connection)
+  const disconnectCallback = connectionsModel.pairing.onPairingSuccess(
+    async (initiatedLocally, localPersonId, localInstanceId,
+           remotePersonId, remoteInstanceId, token) => {
+      // Callback fires when pairing succeeds
+      resolve({ remotePersonId, remoteInstanceId });
+    }
+  );
+
+  // 3. Set timeout to prevent infinite hangs
+  setTimeout(() => reject(new Error('Timeout')), 60000);
+
+  // 4. Initiate connection (callback will fire when successful)
+  connectionsModel.pairing.connectUsingInvitation(invitation)
+    .catch(reject);
+});
+
+// 5. Wait for callback to fire
+const pairingInfo = await pairingPromise;
+
+// 6. Create contact for remote person
+await handleNewConnection(pairingInfo.remotePersonId, leuteModel);
+
+// 7. Grant access rights for CHUM sync
+await grantAccessRightsAfterPairing(pairingInfo.remotePersonId,
+  leuteModel, channelManager);
+```
+
+**Critical Notes**:
+- `allowPairing: true` MUST be set in ConnectionsModel config
+- Callback must be registered BEFORE calling `connectUsingInvitation()`
+- Connection is bidirectional - both sides create contacts for each other
+- Contacts prove successful connection establishment
+
+### Contact Creation Pattern (src/helpers/ContactCreationHelper.ts)
+
+Contacts are automatically created when connections succeed:
+```typescript
+// Check if contact already exists
+const existingContacts = await leuteModel.others();
+const exists = existingContacts.some(someone =>
+  someone.idHash === remotePersonId);
+
+if (!exists) {
+  // Create SomeoneModel for the remote person
+  await leuteModel.createOrUpdateOtherPerson(remotePersonId, profileOptions);
+}
+```
+
+## Common Pitfalls and Best Practices
+
+### Connection Establishment
+❌ **Wrong**: Calling `connectUsingInvitation()` without registering callback first
+```typescript
+// This will hang - callback fires but nobody is listening!
+await connectionsModel.pairing.connectUsingInvitation(invitation);
+```
+
+✅ **Correct**: Register callback BEFORE calling `connectUsingInvitation()`
+```typescript
+const promise = new Promise((resolve) => {
+  const disconnect = connectionsModel.pairing.onPairingSuccess(resolve);
+  connectionsModel.pairing.connectUsingInvitation(invitation);
+});
+await promise;
+```
+
+### Model Initialization
+❌ **Wrong**: Using models before calling `.init()`
+```typescript
+const leuteModel = new LeuteModel(commServerUrl, true);
+await leuteModel.others(); // Will fail - not initialized!
+```
+
+✅ **Correct**: Always call `.init()` before using models
+```typescript
+const leuteModel = new LeuteModel(commServerUrl, true);
+await leuteModel.init();
+await leuteModel.others(); // Now works
+```
+
+### Import Paths
+❌ **Wrong**: Omitting `.js` extension in ESM imports
+```typescript
+import { foo } from './bar'; // Will fail in ESM
+```
+
+✅ **Correct**: Always include `.js` extension
+```typescript
+import { foo } from './bar.js'; // Works in ESM
+```
+
+### Recipe Registration
+❌ **Wrong**: Using object type without registering recipe
+```typescript
+const obj = { $type$: 'MyType', data: 'foo' };
+await storeVersionedObject(obj); // Will fail - recipe not registered
+```
+
+✅ **Correct**: Register recipe in `initialRecipes` during `initInstance()`
+```typescript
+const MyTypeRecipe = { /* recipe definition */ };
+await initInstance({
+  initialRecipes: [...CORE_RECIPES, MyTypeRecipe]
+});
+```
 
 ## Known Limitations
 
@@ -187,4 +408,5 @@ Currently no test suite exists. Manual testing:
 - Authentication currently only supports instance owner
 - QUIC transport uses WebSocket fallback (not native QUIC streams)
 - Query functionality requires reverse maps setup (ObjectHandler.query())
-- Storage encryption not fully supported on all platforms (config.ts:37)
+- Storage encryption not fully supported on all platforms (config.ts:43)
+- Filesystem integration requires fuse3.one package installed
