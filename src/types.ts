@@ -26,7 +26,11 @@ export enum MessageType {
   RECIPE_GET = 'recipe.get',
   RECIPE_LIST = 'recipe.list',
   RECIPE_RESPONSE = 'recipe.response',
-  
+
+  // Connection & Contact Operations
+  CONTACTS_LIST = 'contacts.list',
+  CONTACTS_RESPONSE = 'contacts.response',
+
   // Streaming
   STREAM_SUBSCRIBE = 'stream.subscribe',
   STREAM_EVENT = 'stream.event',

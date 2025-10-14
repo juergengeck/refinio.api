@@ -1,6 +1,7 @@
-import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
+import { createRandomString } from '@refinio/one.core/lib/system/crypto-helpers.js';
+import { createSignKeyPair, sign } from '@refinio/one.core/lib/crypto/sign.js';
 import { ClientIdentityCredential } from '../types.js';
 
 export interface AuthConfig {
@@ -63,8 +64,8 @@ export class CredentialManager {
   }
 
   async createSession(clientId: string, credential: ClientIdentityCredential): Promise<string> {
-    const sessionId = crypto.randomBytes(32).toString('hex');
-    
+    const sessionId = await createRandomString(64, true);
+
     this.sessions.set(sessionId, {
       clientId,
       credential,
@@ -118,15 +119,15 @@ export class CredentialManager {
     permissions: string[],
     validityDays: number = 365
   ): Promise<ClientIdentityCredential> {
-    const keypair = crypto.generateKeyPairSync('ed25519');
-    const publicKeyHex = keypair.publicKey.export({ type: 'spki', format: 'der' }).toString('hex');
-    
+    const keypair = createSignKeyPair();
+    const publicKeyHex = Buffer.from(keypair.publicKey).toString('hex');
+
     const now = new Date();
     const expiration = new Date(now.getTime() + (validityDays * 24 * 60 * 60 * 1000));
 
     const credential: ClientIdentityCredential = {
       $type$: 'ClientIdentityCredential',
-      id: crypto.randomBytes(16).toString('hex'),
+      id: await createRandomString(32, true),
       issuer: 'api-server',
       credentialSubject: {
         id: clientId,
@@ -144,20 +145,20 @@ export class CredentialManager {
       }
     };
 
-    // Sign the credential (simplified)
+    // Sign the credential
     const message = JSON.stringify({
       issuer: credential.issuer,
       subject: credential.credentialSubject,
       issuanceDate: credential.issuanceDate,
       expirationDate: credential.expirationDate
     });
-    
-    const signature = crypto.sign(null, Buffer.from(message), keypair.privateKey);
-    credential.proof.proofValue = signature.toString('base64');
+
+    const signature = sign(Buffer.from(message), keypair.secretKey);
+    credential.proof.proofValue = Buffer.from(signature).toString('base64');
 
     // Store credential
     await this.storeCredential(credential);
-    
+
     return credential;
   }
 

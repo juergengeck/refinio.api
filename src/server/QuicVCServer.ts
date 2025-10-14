@@ -5,6 +5,7 @@ import { InstanceAuthManager, AuthSession } from '../auth/InstanceAuthManager.js
 import { ObjectHandler } from '../handlers/ObjectHandler.js';
 import { RecipeHandler } from '../handlers/RecipeHandler.js';
 import { ProfileHandler } from '../handlers/ProfileHandler.js';
+import { ConnectionHandler } from '../handlers/ConnectionHandler.js';
 import { MessageType, Message, ErrorCode } from '../types.js';
 import crypto from 'crypto';
 
@@ -15,6 +16,7 @@ export interface QuicVCServerOptions {
     object: ObjectHandler;
     recipe: RecipeHandler;
     profile: ProfileHandler;
+    connectionHandler: ConnectionHandler;
   };
   config: {
     port: number;
@@ -146,6 +148,10 @@ export class QuicVCServer extends EventEmitter {
       case MessageType.RECIPE_GET:
       case MessageType.RECIPE_LIST:
         await this.handleRecipeOperation(message, session, connection);
+        break;
+
+      case MessageType.CONTACTS_LIST:
+        await this.handleContactsOperation(message, session, connection);
         break;
 
       case MessageType.STREAM_SUBSCRIBE:
@@ -286,6 +292,28 @@ export class QuicVCServer extends EventEmitter {
       await this.sendMessage(connection, {
         id: message.id,
         type: MessageType.RECIPE_RESPONSE,
+        timestamp: Date.now(),
+        payload: result
+      });
+    } catch (error: any) {
+      await this.sendError(connection, message.id, error.code || ErrorCode.INTERNAL_ERROR, error.message);
+    }
+  }
+
+  private async handleContactsOperation(message: Message, session: ClientSession, connection: any) {
+    if (!session.authenticated || !session.authSession) {
+      await this.sendError(connection, message.id, ErrorCode.UNAUTHORIZED, 'Not authenticated');
+      return;
+    }
+
+    const { connectionHandler } = this.options.handlers;
+
+    try {
+      const result = await connectionHandler.listContacts();
+
+      await this.sendMessage(connection, {
+        id: message.id,
+        type: MessageType.CONTACTS_RESPONSE,
         timestamp: Date.now(),
         payload: result
       });

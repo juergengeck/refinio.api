@@ -1,13 +1,14 @@
 /**
  * Verifiable Credential Authentication Handler
- * 
+ *
  * Handles authentication using verifiable credentials derived from invitation tokens.
  * This allows clients that have received pairing invitations to authenticate
  * with the API using cryptographically verifiable credentials.
  */
 
-import * as tweetnacl from 'tweetnacl';
-import { createHash } from 'crypto';
+import { createRandomString } from '@refinio/one.core/lib/system/crypto-helpers.js';
+import { createSignKeyPair, sign as signData, signatureVerify } from '@refinio/one.core/lib/crypto/sign.js';
+import { createKeyPair } from '@refinio/one.core/lib/crypto/encryption.js';
 
 export interface InvitationToken {
     token: string;
@@ -56,8 +57,8 @@ export interface AuthenticationResult {
 export class VCAuthHandler {
     private trustedInvitations: Map<string, InvitationToken> = new Map();
     private verifiedCredentials: Map<string, VerifiableCredential> = new Map();
-    private clientKeypairs: Map<string, tweetnacl.BoxKeyPair> = new Map();
-    
+    private clientKeypairs: Map<string, {publicKey: Uint8Array; secretKey: Uint8Array}> = new Map();
+
     constructor() {
         console.log('[VCAuthHandler] Initialized');
     }
@@ -65,18 +66,18 @@ export class VCAuthHandler {
     /**
      * Create a verifiable credential from an invitation token
      */
-    createCredentialFromInvitation(invitation: InvitationToken, clientId?: string): VerifiableCredential {
+    async createCredentialFromInvitation(invitation: InvitationToken, clientId?: string): Promise<VerifiableCredential> {
         // Generate or retrieve client keypair
-        const clientIdOrGenerated = clientId || this.generateClientId();
+        const clientIdOrGenerated = clientId || await this.generateClientId();
         let keypair = this.clientKeypairs.get(clientIdOrGenerated);
         if (!keypair) {
-            keypair = tweetnacl.box.keyPair();
+            keypair = createKeyPair();
             this.clientKeypairs.set(clientIdOrGenerated, keypair);
         }
-        
+
         const now = new Date();
-        const credentialId = `urn:uuid:${this.generateUUID()}`;
-        
+        const credentialId = `urn:uuid:${await this.generateUUID()}`;
+
         // Create the credential
         const credential: VerifiableCredential = {
             '@context': [
@@ -105,22 +106,22 @@ export class VCAuthHandler {
                 proofValue: '' // Will be filled below
             }
         };
-        
+
         // Sign the credential
         const signatureBase = this.canonicalizeCredential(credential);
-        const signKeypair = tweetnacl.sign.keyPair();
-        const signature = tweetnacl.sign.detached(
+        const signKeypair = createSignKeyPair();
+        const signature = signData(
             Buffer.from(signatureBase),
             signKeypair.secretKey
         );
         credential.proof.proofValue = Buffer.from(signature).toString('base64');
-        
+
         // Store the credential
         this.verifiedCredentials.set(credentialId, credential);
         this.trustedInvitations.set(invitation.token, invitation);
-        
+
         console.log('[VCAuthHandler] Created credential:', credentialId);
-        
+
         return credential;
     }
     
@@ -200,38 +201,38 @@ export class VCAuthHandler {
     /**
      * Create an authentication token from a verifiable credential
      */
-    createAuthToken(credential: VerifiableCredential): string {
+    async createAuthToken(credential: VerifiableCredential): Promise<string> {
         // Create a JWT-like token that can be used for API authentication
         const header = {
             alg: 'EdDSA',
             typ: 'JWT',
             kid: credential.id
         };
-        
+
         const payload = {
             iss: credential.issuer,
             sub: credential.credentialSubject.id,
             aud: 'refinio-api',
-            exp: credential.expirationDate ? 
-                Math.floor(new Date(credential.expirationDate).getTime() / 1000) : 
+            exp: credential.expirationDate ?
+                Math.floor(new Date(credential.expirationDate).getTime() / 1000) :
                 Math.floor(Date.now() / 1000) + 86400, // 24 hours
             iat: Math.floor(Date.now() / 1000),
             permissions: credential.credentialSubject.permissions,
             vc: credential.id
         };
-        
+
         const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
         const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
-        
+
         // Sign the token
-        const signKeypair = tweetnacl.sign.keyPair();
+        const signKeypair = createSignKeyPair();
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = tweetnacl.sign.detached(
+        const signature = signData(
             Buffer.from(signingInput),
             signKeypair.secretKey
         );
         const encodedSignature = Buffer.from(signature).toString('base64url');
-        
+
         return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
     }
     
@@ -335,24 +336,23 @@ export class VCAuthHandler {
     /**
      * Helper: Generate client ID
      */
-    private generateClientId(): string {
-        return `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    private async generateClientId(): Promise<string> {
+        const randomPart = await createRandomString(9);
+        return `client-${Date.now()}-${randomPart}`;
     }
-    
+
     /**
      * Helper: Generate UUID
      */
-    private generateUUID(): string {
-        const bytes = tweetnacl.randomBytes(16);
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        
-        const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    private async generateUUID(): Promise<string> {
+        const hex = await createRandomString(32, true);
+
+        // Convert to UUID v4 format
         return [
             hex.slice(0, 8),
             hex.slice(8, 12),
-            hex.slice(12, 16),
-            hex.slice(16, 20),
+            '4' + hex.slice(13, 16), // Version 4
+            ((parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16) + hex.slice(17, 20), // Variant
             hex.slice(20, 32)
         ].join('-');
     }

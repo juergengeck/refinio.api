@@ -253,6 +253,38 @@ export class ConnectionHandler {
   }
 
   /**
+   * Create an invitation for pairing
+   */
+  async createInvite() {
+    try {
+      console.log('ConnectionHandler: Creating invitation...');
+
+      // Create invitation using ConnectionsModel
+      const invitation = await this.connectionsModel.pairing.createInvitation();
+
+      // Format as URL
+      const inviteUrl = `https://one.refinio.net/invite#${encodeURIComponent(JSON.stringify(invitation))}`;
+
+      console.log('ConnectionHandler: Invitation created successfully');
+      console.log(`  URL: ${invitation.url}`);
+      console.log(`  Token: ${invitation.token.substring(0, 16)}...`);
+
+      return {
+        success: true,
+        inviteUrl,
+        invitation
+      };
+    } catch (error: any) {
+      console.error('ConnectionHandler: Failed to create invitation:', error);
+
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * List active connections
    */
   async listConnections() {

@@ -75,6 +75,22 @@ export class HttpRestServer {
       return;
     }
 
+    // POST /api/connections/create-invite - Create invitation
+    if (url === '/api/connections/create-invite' && method === 'POST') {
+      console.log('[HttpRestServer] Received POST /api/connections/create-invite');
+
+      const result = await this.connectionHandler.createInvite();
+
+      if (result.success && result.inviteUrl) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ inviteUrl: result.inviteUrl }));
+      } else {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: result.error || 'Failed to create invite' }));
+      }
+      return;
+    }
+
     // POST /api/connections/invite - Accept invitation and establish connection
     if (url === '/api/connections/invite' && method === 'POST') {
       console.log('[HttpRestServer] Received POST /api/connections/invite');

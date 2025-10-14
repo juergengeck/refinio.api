@@ -2,7 +2,7 @@ import type { Person } from '@refinio/one.core/lib/recipes.js';
 import { getInstanceIdHash, getInstanceOwnerIdHash, getInstanceOwnerEmail } from '@refinio/one.core/lib/instance.js';
 import { getIdObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
 import { SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
-import crypto from 'crypto';
+import { createRandomString } from '@refinio/one.core/lib/system/crypto-helpers.js';
 
 export interface AuthSession {
   personId: SHA256IdHash<Person>;
@@ -40,18 +40,18 @@ export class InstanceAuthManager {
    * Generate a new authentication challenge
    */
   async generateChallenge(clientId: string): Promise<string> {
-    const challenge = crypto.randomBytes(32).toString('hex');
-    
+    const challenge = await createRandomString(64, true);
+
     this.challenges.set(clientId, {
       challenge,
       createdAt: Date.now()
     });
-    
+
     // Auto-cleanup after timeout
     setTimeout(() => {
       this.challenges.delete(clientId);
     }, this.challengeTimeout);
-    
+
     return challenge;
   }
 
@@ -83,9 +83,9 @@ export class InstanceAuthManager {
     try {
       // Get the Person object for the instance owner
       const person = await getIdObject(ownerIdHash) as Person;
-      
-      const sessionToken = crypto.randomBytes(32).toString('hex');
-      
+
+      const sessionToken = await createRandomString(64, true);
+
       const session: AuthSession = {
         personId: ownerIdHash,
         person,
@@ -94,10 +94,10 @@ export class InstanceAuthManager {
         createdAt: Date.now(),
         sessionToken
       };
-      
+
       this.sessions.set(sessionToken, session);
       this.challenges.delete(clientId);
-      
+
       return session;
     } catch (error) {
       console.error('Failed to get person object:', error);
