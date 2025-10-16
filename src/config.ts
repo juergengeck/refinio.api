@@ -11,9 +11,11 @@ export interface ServerConfig {
     name: string;
     email: string;
     secret: string;
+    ownerName?: string;
     directory?: string;
     encryptStorage?: boolean;
     commServerUrl?: string;
+    wipeStorage?: boolean;
   };
   filer?: {
     mountPoint?: string;
@@ -82,6 +84,10 @@ export async function loadConfig(): Promise<ServerConfig> {
     config.server.port = parseInt(process.env.REFINIO_API_PORT, 10);
   }
 
+  if (process.env.REFINIO_INSTANCE_NAME) {
+    config.instance.name = process.env.REFINIO_INSTANCE_NAME;
+  }
+
   if (process.env.REFINIO_INSTANCE_EMAIL) {
     config.instance.email = process.env.REFINIO_INSTANCE_EMAIL;
   }
@@ -104,6 +110,10 @@ export async function loadConfig(): Promise<ServerConfig> {
 
   if (process.env.REFINIO_LOG_LEVEL) {
     config.logging.level = process.env.REFINIO_LOG_LEVEL as any;
+  }
+
+  if (process.env.REFINIO_WIPE_STORAGE !== undefined) {
+    config.instance.wipeStorage = process.env.REFINIO_WIPE_STORAGE === 'true';
   }
 
   // Filer configuration from env vars

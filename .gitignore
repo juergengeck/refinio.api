@@ -12,3 +12,5 @@ coverage/
 *.key
 *.pem
 *.cert
+test*.txt
+C*/

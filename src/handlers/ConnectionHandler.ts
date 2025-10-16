@@ -47,7 +47,12 @@ export class ConnectionHandler {
     remotePublicKey: string;
     token?: string;
     connectionGroupName?: string;
-  }) {
+  }): Promise<{
+    success: boolean;
+    connectionInfo?: any;
+    error?: string;
+    details?: any;
+  }> {
     try {
       console.log('ConnectionHandler: Establishing connection...');
 
@@ -350,7 +355,11 @@ export class ConnectionHandler {
    *
    * @returns Array of contacts with personId, nickname, and communicationEndpoints
    */
-  async listContacts() {
+  async listContacts(): Promise<{
+    success: boolean;
+    contacts?: any[];
+    error?: string;
+  }> {
     try {
       // Get all known persons except ourselves
       const someones = await this.leuteModel.others();

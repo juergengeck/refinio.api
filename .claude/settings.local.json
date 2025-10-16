@@ -23,7 +23,11 @@
       "Bash(git log:*)",
       "Bash(echo:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$(cat <<''EOF''\nAdd complete Filer integration with ProjFS support\n\nMajor refactoring to mount full Filer filesystem structure:\n- Created complete Filer with all 7 filesystems (chats, debug, invites, objects, types, profiles, questionnaires)\n- Initialize all required models (LeuteModel, TopicModel, Notifications, IoMManager, QuestionnaireModel)\n- Mount complete filesystem structure matching Replicant implementation\n- Fix package naming: @refinio/one.ifsprojfs → @refinio/one.projfs for consistency\n- Integration tests pass: ProjFS mount works, invites readable at /invites/iop_invite.txt\n- Bidirectional contact creation verified\nEOF\n)\")"
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd complete Filer integration with ProjFS support\n\nMajor refactoring to mount full Filer filesystem structure:\n- Created complete Filer with all 7 filesystems (chats, debug, invites, objects, types, profiles, questionnaires)\n- Initialize all required models (LeuteModel, TopicModel, Notifications, IoMManager, QuestionnaireModel)\n- Mount complete filesystem structure matching Replicant implementation\n- Fix package naming: @refinio/one.ifsprojfs → @refinio/one.projfs for consistency\n- Integration tests pass: ProjFS mount works, invites readable at /invites/iop_invite.txt\n- Bidirectional contact creation verified\nEOF\n)\")",
+      "Bash(powershell.exe:*)",
+      "Bash(npm install:*)",
+      "Bash(wmic:*)",
+      "Bash(wsl bash -c:*)"
     ],
     "deny": [],
     "ask": []

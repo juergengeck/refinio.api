@@ -1,5 +1,5 @@
 import '@refinio/one.core/lib/system/load-nodejs.js';
-import { initInstance, getInstanceIdHash, registerRecipes, closeInstance } from '@refinio/one.core/lib/instance.js';
+import { initInstance, getInstanceIdHash, getInstanceOwnerIdHash, registerRecipes, closeInstance } from '@refinio/one.core/lib/instance.js';
 import { setBaseDirOrName } from '@refinio/one.core/lib/system/storage-base.js';
 import { getQuicTransport } from '@refinio/one.core/lib/system/quic-transport.js';
 import { createRandomString } from '@refinio/one.core/lib/system/crypto-helpers.js';
@@ -16,7 +16,15 @@ import { StateEntryRecipe, AppStateJournalRecipe } from './state/AppStateRecipes
 export { AppStateModel, StateEntryRecipe, AppStateJournalRecipe } from './state/index.js';
 export type { StateEntry, AppStateJournal } from './state/index.js';
 
-export async function startApiServer() {
+export async function startApiServer(): Promise<{
+  server: any;
+  httpServer: any;
+  channelManager: any;
+  leuteModel: any;
+  connectionsModel: any;
+  instanceIdHash: string;
+  filerAdapter: any;
+}> {
   const config = await loadConfig();
 
   // Set storage directory
@@ -55,23 +63,38 @@ export async function startApiServer() {
     name: config.instance.name || `api-${await createRandomString(16)}`,
     email: config.instance.email || `api@${await createRandomString(16)}.local`,
     secret: config.instance.secret || await createRandomString(32),
+    ownerName: config.instance.ownerName || config.instance.email || 'API Owner',
     directory: storageDir,
     encryptStorage: config.instance.encryptStorage !== false,
     initialRecipes: [...CORE_RECIPES, ...RecipesStable, ...RecipesExperimental, StateEntryRecipe, AppStateJournalRecipe],
     initiallyEnabledReverseMapTypes: reverseMaps as any,
     initiallyEnabledReverseMapTypesForIdObjects: reverseMapsForIdObjects as any,
-    wipeStorage: false
+    wipeStorage: config.instance.wipeStorage || false
   };
-  
+
   await initInstance(instanceOptions);
-  
+
   // Verify instance was created
   const instanceIdHash = getInstanceIdHash();
   if (!instanceIdHash) {
     throw new Error('Failed to initialize ONE.core instance');
   }
-  
+
   console.log(`ONE.core instance initialized: ${instanceIdHash}`);
+  const ownerIdHash = getInstanceOwnerIdHash();
+  console.log(`Instance owner: ${ownerIdHash}`);
+
+  // Verify owner Person exists in storage
+  if (ownerIdHash) {
+    const { getIdObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+    try {
+      const ownerPerson = await getIdObject(ownerIdHash);
+      console.log(`Owner Person verified in storage:`, ownerPerson);
+    } catch (err) {
+      console.error(`Owner Person NOT found in storage!`, err);
+      throw new Error(`Owner Person (${ownerIdHash}) not found in storage after initInstance`);
+    }
+  }
 
   // Get the QUIC transport from one.core
   const quicTransport = getQuicTransport();
@@ -189,11 +212,13 @@ export async function startApiServer() {
   console.log(`Instance: ${instanceOptions.name} (${instanceOptions.email})`);
 
   // Also start HTTP REST server for refinio.cli compatibility
+  // Use next port to avoid conflict with QuicVCServer
+  const httpPort = config.server.port + 1;
   const { HttpRestServer } = await import('./server/HttpRestServer.js');
-  const httpServer = new HttpRestServer(connectionHandler, leuteModel, config.server.port);
+  const httpServer = new HttpRestServer(connectionHandler, leuteModel, httpPort);
   await httpServer.start();
 
-  console.log(`HTTP REST API listening on port ${config.server.port}`);
+  console.log(`HTTP REST API listening on port ${httpPort}`);
 
   // Optionally mount filesystem
   let filerAdapter = null;
