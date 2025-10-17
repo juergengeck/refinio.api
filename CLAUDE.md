@@ -45,7 +45,7 @@ The server uses configuration from (in order of precedence):
 - **Transport**: QUIC-based transport with WebSocket fallback (QuicVCServer)
 - **Module System**: ESM modules (`"type": "module"` in package.json)
 
-### Initialization Flow (src/index.ts:19-191)
+### Initialization Flow (src/index.ts:19-252)
 1. Load configuration from files or environment variables
 2. Set storage directory via `setBaseDirOrName()`
 3. Import recipes from:
@@ -54,12 +54,21 @@ The server uses configuration from (in order of precedence):
    - `@refinio/one.models/lib/recipes/recipes-experimental.js`
    - Custom recipes: StateEntryRecipe, AppStateJournalRecipe
 4. Initialize ONE.core instance with `initInstance()` - creates or loads Instance
-5. Initialize LeuteModel, ChannelManager, and ConnectionsModel from one.models
-6. Create handlers: ObjectHandler, RecipeHandler, ProfileHandler, ConnectionHandler
-7. Create QuicVCServer with one.core's QUIC transport
-8. Create HttpRestServer for REST API endpoints (port from config)
-9. Optionally mount filesystem via IFileSystemAdapter (if config.filer.mountPoint set)
-10. Start both servers listening on configured ports
+5. Initialize all required models from one.models:
+   - LeuteModel - Person/Profile management
+   - ChannelManager - CHUM channel communication
+   - TopicModel - Chat topics
+   - Notifications - Notification system
+   - IoMManager - Internet of Me manager
+   - JournalModel - Set to null (not fully initialized)
+   - QuestionnaireModel - Questionnaire management
+   - ConnectionsModel - Connection establishment and pairing
+6. Register global pairing success handler for automatic contact creation
+7. Create handlers: ObjectHandler, RecipeHandler, ProfileHandler, ConnectionHandler
+8. Create QuicVCServer with one.core's QUIC transport
+9. Create HttpRestServer for REST API endpoints (port from config)
+10. Optionally mount complete Filer filesystem via IFileSystemAdapter (if config.filer.mountPoint set)
+11. Start both servers listening on configured ports
 
 ### Authentication Architecture (src/auth/InstanceAuthManager.ts)
 - **Challenge-Response**: Server generates cryptographic challenge, client signs with Person key
@@ -238,15 +247,17 @@ interface Message {
 - Query contacts after connection: `await leuteModel.others()`
 - Check network connectivity to CommServer
 
-## ConnectionsModel Configuration (src/index.ts:94-105)
+## ConnectionsModel Configuration (src/index.ts:116-127)
 
 The ConnectionsModel is initialized with specific settings:
 - `commServerUrl` - Communication server URL (default: wss://comm10.dev.refinio.one, override via REFINIO_COMM_SERVER_URL)
 - `allowPairing: true` - **CRITICAL**: Required to accept invitations and trigger onPairingSuccess callbacks
-- `acceptIncomingConnections: false` - Client only makes outgoing connections via invites
+- `acceptIncomingConnections` - Dynamic based on server role:
+  - `true` when mounting filesystem (server creates invites)
+  - `false` when running as client only
 - `acceptUnknownInstances: false` - Only accept known instances
 - `acceptUnknownPersons: false` - Only accept known persons
-- `establishOutgoingConnections: true` - Can initiate connections
+- `establishOutgoingConnections: true` - Can initiate connections (both server and client)
 - `pairingTokenExpirationDuration: 3600000` - 1 hour token validity
 - `noImport: false` / `noExport: false` - Enable data import/export
 
@@ -265,17 +276,21 @@ filer: {
 
 ### Implementation (src/filer/)
 - **IFileSystemAdapter** - Bridges IFileSystem to ProjFS/FUSE
-- **createFilerWithPairing** - Helper to create PairingFileSystem with invite files
-- **PairingFileSystem** - Exposes invite files at `/invites/`:
-  - `iop_invite.txt` / `iop_invite.png` - Internet of People invites
-  - `iom_invite.txt` / `iom_invite.png` - Internet of Me invites
+- **createCompleteFiler** - Helper to create complete Filer with all 7 filesystems:
+  - `/chats` - Chat/topic filesystem
+  - `/debug` - Debug filesystem
+  - `/invites` - Pairing invites (iop_invite.txt, iom_invite.txt and PNG QR codes)
+  - `/objects` - ONE objects filesystem
+  - `/types` - Recipe/type definitions
+  - `/profiles` - Profile management
+  - `/questionnaires` - Questionnaire filesystem
 
-### Mount Process (src/index.ts:150-176)
-1. Import IFileSystemAdapter and createFilerWithPairing
-2. Create filesystem with PairingFileSystem using ConnectionsModel
+### Mount Process (src/index.ts:199-237)
+1. Import IFileSystemAdapter and createCompleteFiler
+2. Create complete Filer with all filesystems using all initialized models
 3. Create adapter with mount point and filesystem
 4. Call `adapter.mount()` to mount filesystem
-5. Invites become accessible as files in the mounted directory
+5. All filesystems become accessible, including invites at `/invites/`
 
 ## Special Files
 
@@ -331,18 +346,54 @@ await grantAccessRightsAfterPairing(pairingInfo.remotePersonId,
 
 ### Contact Creation Pattern (src/helpers/ContactCreationHelper.ts)
 
-Contacts are automatically created when connections succeed:
-```typescript
-// Check if contact already exists
-const existingContacts = await leuteModel.others();
-const exists = existingContacts.some(someone =>
-  someone.idHash === remotePersonId);
+Contacts are automatically created when connections succeed using a three-step process:
 
-if (!exists) {
-  // Create SomeoneModel for the remote person
-  await leuteModel.createOrUpdateOtherPerson(remotePersonId, profileOptions);
-}
+```typescript
+// 1. Create Profile using ProfileModel
+const profile = await ProfileModel.constructWithNewProfile(
+  ensureIdHash(personId),
+  await leuteModel.myMainIdentity(),
+  'default',
+  [], // communicationEndpoints
+  []  // personDescriptions
+);
+await profile.saveAndLoad();
+
+// 2. Create Someone object linking to the Profile
+const newSomeone = {
+  $type$: 'Someone' as const,
+  someoneId: personId,
+  mainProfile: profileHash,
+  identities: new Map([[personId.toString(), new Set([profileHash])]])
+};
+const someoneResult = await storeVersionedObject(newSomeone);
+
+// 3. Add to contacts list (idempotent)
+await leuteModel.addSomeoneElse(someoneResult.idHash);
 ```
+
+**Helper Functions**:
+- `ensureContactExists(personId, leuteModel)` - Checks for existing contact or creates new one
+- `handleNewConnection(remotePersonId, leuteModel)` - Called automatically on pairing success
+
+### Access Rights After Pairing (src/helpers/AccessRightsHelper.ts)
+
+After successful pairing, access rights must be granted to enable CHUM channel synchronization:
+
+```typescript
+await grantAccessRightsAfterPairing(
+  remotePersonId,
+  leuteModel,
+  channelManager
+);
+```
+
+**What this does**:
+1. Grants the remote person access to local Person object
+2. Grants access to CHUM channels for data synchronization
+3. Enables bidirectional state sharing via AppStateModel
+
+**When to call**: Immediately after contact creation in the `onPairingSuccess` callback (both server and client sides)
 
 ## Common Pitfalls and Best Practices
 
