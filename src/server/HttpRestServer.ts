@@ -134,6 +134,15 @@ export class HttpRestServer {
       return;
     }
 
+    // GET /api/connections/status - Get connection status
+    if (url === '/api/connections/status' && method === 'GET') {
+      const result = await this.connectionHandler.getConnectionStatus();
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+      return;
+    }
+
     // GET /api/connections - List active connections
     if (url === '/api/connections' && method === 'GET') {
       const result = await this.connectionHandler.listConnections();
