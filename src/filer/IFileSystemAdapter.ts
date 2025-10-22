@@ -34,15 +34,33 @@ async function loadNativeProvider() {
     if (platform === 'win32') {
         // Windows - use ProjFS (CommonJS)
         console.log('[loadNativeProvider] Loading ProjFS...');
-        const { IFSProjFSProvider } = require('@refinio/one.projfs');
-        return { provider: IFSProjFSProvider, type: 'projfs' };
+        try {
+            const { IFSProjFSProvider } = require('@refinio/one.projfs');
+            return { provider: IFSProjFSProvider, type: 'projfs' };
+        } catch (error) {
+            throw new Error(
+                `Failed to load @refinio/one.projfs module. ` +
+                `This is required for Windows ProjFS support. ` +
+                `Install it with: npm install @refinio/one.projfs\n` +
+                `Original error: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     } else if (platform === 'linux' || isWSL()) {
         // Linux/WSL - use FUSE3 (use dynamic import for ESM compatibility)
         console.log('[loadNativeProvider] Detected Linux/WSL, loading FUSE3...');
-        // @ts-ignore - dynamic import of module without types
-        const fuse3Module = await import('@refinio/one.fuse3/IFSFuse3Provider.js');
-        console.log('[loadNativeProvider] FUSE3 module loaded:', Object.keys(fuse3Module));
-        return { provider: fuse3Module.IFSFuse3Provider, type: 'fuse3' };
+        try {
+            // @ts-ignore - dynamic import of module without types
+            const fuse3Module = await import('@refinio/one.fuse3/IFSFuse3Provider.js');
+            console.log('[loadNativeProvider] FUSE3 module loaded:', Object.keys(fuse3Module));
+            return { provider: fuse3Module.IFSFuse3Provider, type: 'fuse3' };
+        } catch (error) {
+            throw new Error(
+                `Failed to load @refinio/one.fuse3 module. ` +
+                `This is required for Linux/WSL FUSE3 support. ` +
+                `Install it with: npm install @refinio/one.fuse3\n` +
+                `Original error: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     } else {
         throw new Error(`Unsupported platform: ${platform}`);
     }

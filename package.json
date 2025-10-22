@@ -41,8 +41,10 @@
   },
   "dependencies": {
     "@refinio/one.core": "file:../packages/one.core",
-    "@refinio/one.models": "file:../packages/one.models",
-    "@refinio/one.projfs": "file:../vendor/refinio-one.projfs-1.0.0.tgz",
+    "@refinio/one.models": "file:../packages/one.models"
+  },
+  "optionalDependencies": {
+    "@refinio/one.projfs": "file:../one.projfs",
     "@refinio/one.fuse3": "file:../one.fuse3"
   },
   "devDependencies": {
