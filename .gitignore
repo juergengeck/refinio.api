@@ -14,3 +14,11 @@ coverage/
 *.cert
 test*.txt
 C*/
+
+# Local package dependencies (git repositories)
+packages/
+
+# Exclude compiled JavaScript files in source directory
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts

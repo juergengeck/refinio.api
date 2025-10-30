@@ -6,6 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `@refinio/refinio-api` is an instance-based API server for the ONE platform that uses QUIC with verifiable credentials (QUICVC) for transport. It provides CRUD operations for ONE objects, profile management using one.models, and recipe (data structure definition) management.
 
+## Quick Start for New Developers
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Build the project
+npm run build
+
+# 3. Set required environment variable
+export REFINIO_INSTANCE_SECRET="your-secret-here"
+
+# 4. Start the server
+npm start
+
+# Server will run on http://localhost:49498 (default)
+# Instance data stored in ~/.refinio/instance (default)
+```
+
 ## Key Commands
 
 ### Build and Development
@@ -14,8 +33,10 @@ npm run build                    # Compile TypeScript to dist/
 npm run dev                      # Build in watch mode
 npm start                        # Start the API server (node dist/index.js)
 npm test                         # Run tests with Jest
-npm run test:integration         # Run integration tests (requires electron-app running)
+npm run test:integration         # Run integration tests (two instances + CommServer)
 ```
+
+Note: `npm test` requires Jest to be configured. Integration tests spawn multiple processes and verify bidirectional connection establishment.
 
 ### Configuration
 The server uses configuration from (in order of precedence):
@@ -183,8 +204,18 @@ interface Message {
 ## External Dependencies
 
 ### Required ONE Platform Packages
-- `@refinio/one.core` - Core storage, crypto, instance management
-- `@refinio/one.models` - LeuteModel, ChannelManager, Profile recipes
+- `@refinio/one.core` - Core storage, crypto, instance management (file:../packages/one.core)
+- `@refinio/one.models` - LeuteModel, ChannelManager, Profile recipes (file:../packages/one.models)
+
+### Optional Dependencies
+- `@refinio/one.projfs` - Windows ProjFS filesystem support (file:../one.projfs)
+- `@refinio/one.fuse3` - Linux/Mac FUSE3 filesystem support (file:../one.fuse3)
+
+**When are optional dependencies needed?**
+- Only required if you want to mount the virtual filesystem (config.filer.mountPoint set)
+- Without these packages, the API server runs normally but without filesystem integration
+- Installation may fail on platforms without native support - this is expected and safe to ignore
+- The server gracefully handles missing optional dependencies and disables filesystem features
 
 ### ONE.core Key Functions
 - `initInstance()` / `getInstanceIdHash()` / `closeInstance()` - Instance lifecycle
@@ -216,11 +247,22 @@ interface Message {
 
 ### Testing and Debugging
 
-**Integration Tests** (test/integration/connection-test.js):
-- Tests complete connection flow between refinio.api and electron-app
-- Verifies bidirectional contact creation
-- Requires electron-app to be available in parent directory
+**Unit Tests**:
+- Framework: Jest (configure via jest.config.js if needed)
+- Run with: `npm test`
+- Tests individual handlers, models, and utilities
+
+**Integration Tests** (test/integration/):
+- **connection-test.js** - Complete two-instance pairing test:
+  - Spawns local CommServer (port 8000)
+  - Spawns SERVER instance with ProjFS mount (port 49498)
+  - Spawns CLIENT instance without mount (port 49499)
+  - Reads invite from C:\OneFiler\invites\iop_invite.txt
+  - CLIENT accepts SERVER's invitation via REST API
+  - Verifies bidirectional contact creation using LeuteModel.others()
+  - Proves the entire connection flow works end-to-end
 - Run with: `npm run test:integration`
+- Requires: Windows (for ProjFS), CommServer support in one.models
 
 **Manual Testing**:
 1. Configure refinio-api.config.json or set environment variables
@@ -453,11 +495,117 @@ await initInstance({
 });
 ```
 
+## Package Structure
+
+```
+refinio.api/
+├── src/
+│   ├── index.ts              # Main entry point, instance initialization
+│   ├── config.ts             # Configuration loading (files + env vars)
+│   ├── types.ts              # Shared types and MessageType enum
+│   ├── auth/                 # Authentication components
+│   │   ├── InstanceAuthManager.ts    # Challenge-response auth
+│   │   ├── VCAuthHandler.ts          # Verifiable credential handling
+│   │   └── CredentialManager.ts      # Credential storage
+│   ├── server/               # Server implementations
+│   │   ├── QuicVCServer.ts           # QUIC WebSocket server
+│   │   ├── HttpRestServer.ts         # REST API endpoints
+│   │   └── QuicServer.ts             # Base QUIC server
+│   ├── handlers/             # Request handlers
+│   │   ├── ObjectHandler.ts          # CRUD operations
+│   │   ├── RecipeHandler.ts          # Recipe management
+│   │   ├── ProfileHandler.ts         # Profile management
+│   │   └── ConnectionHandler.ts      # Connection establishment
+│   ├── helpers/              # Utility functions
+│   │   ├── ContactCreationHelper.ts  # Auto-create contacts
+│   │   └── AccessRightsHelper.ts     # Grant access after pairing
+│   ├── state/                # State synchronization
+│   │   ├── AppStateModel.ts          # CRDT-based state sync
+│   │   ├── AppStateRecipes.ts        # StateEntry/Journal recipes
+│   │   └── index.ts                  # Public exports
+│   ├── filer/                # Optional filesystem integration
+│   │   ├── IFileSystemAdapter.ts     # ProjFS/FUSE adapter
+│   │   ├── createFilerWithPairing.ts # Create complete Filer
+│   │   └── index.ts                  # Public exports
+│   └── OneCoreInit.ts        # ONE.core initialization utilities
+├── test/
+│   ├── integration/
+│   │   ├── connection-test.js        # Two-instance pairing test
+│   │   ├── test-instance-runner.js   # Helper for spawning instances
+│   │   └── README.md                 # Integration test docs
+│   └── README.md             # Test documentation
+├── dist/                     # Compiled JavaScript output (gitignored)
+├── lib/                      # Alternative compiled output (if used)
+├── @OneObjectInterfaces.d.ts # ONE.core object interface extensions
+├── package.json              # Dependencies and scripts
+├── tsconfig.json             # TypeScript configuration
+└── CLAUDE.md                 # This file
+```
+
+## Troubleshooting
+
+### Installation Issues
+
+**Optional dependency installation fails:**
+```
+npm WARN optional SKIPPING OPTIONAL DEPENDENCY: @refinio/one.projfs
+```
+- This is expected and safe on non-Windows platforms
+- The server will work without filesystem integration
+- Only install these packages if you need virtual filesystem mounting
+
+**Module not found errors after installation:**
+- Run `npm run build` to compile TypeScript
+- Check that `dist/` directory exists
+- Verify node version is >= 18.0.0
+
+### Runtime Issues
+
+**"Failed to initialize ONE.core instance":**
+- Ensure REFINIO_INSTANCE_SECRET is set
+- Check storage directory is writable
+- Verify one.core package is properly installed
+
+**Connection hangs during pairing:**
+- Verify ConnectionsModel has `allowPairing: true`
+- Check CommServer URL is accessible
+- Ensure callback is registered BEFORE calling `connectUsingInvitation()`
+- Look for "onPairingSuccess callback fired" in logs
+
+**Contacts not created after connection:**
+- Check both instances have `allowPairing: true`
+- Verify `handleNewConnection()` is called in pairing callback
+- Query contacts with `await leuteModel.others()`
+- Check logs for contact creation errors
+
+**ProjFS mount fails on Windows:**
+- Ensure @refinio/one.projfs is installed
+- Check mount point path exists and is empty
+- Verify ProjFS is enabled in Windows Features
+- Run with administrator privileges if needed
+
+### Development Issues
+
+**TypeScript compilation errors:**
+- Check tsconfig.json matches project structure
+- Verify all imports use `.js` extensions
+- Ensure @OneObjectInterfaces.d.ts is in include path
+
+**Import path errors (ESM):**
+- Always use `.js` extension: `import './foo.js'` not `import './foo'`
+- Use `import type` for type-only imports
+- Check package.json has `"type": "module"`
+
+**Recipe not found errors:**
+- Verify recipe is added to `initialRecipes` array in src/index.ts
+- Check recipe has `$type$` field
+- Ensure recipe is registered before storing objects
+
 ## Known Limitations
 
 - Delete operation not implemented (ONE.core is immutable by design)
 - Authentication currently only supports instance owner
 - QUIC transport uses WebSocket fallback (not native QUIC streams)
 - Query functionality requires reverse maps setup (ObjectHandler.query())
-- Storage encryption not fully supported on all platforms (config.ts:43)
-- Filesystem integration requires fuse3.one package installed
+- Storage encryption not fully supported on all platforms (config.ts:45)
+- Filesystem integration requires platform-specific packages (@refinio/one.projfs or @refinio/one.fuse3)

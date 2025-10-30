@@ -27,7 +27,11 @@
       "Bash(powershell.exe:*)",
       "Bash(npm install:*)",
       "Bash(wmic:*)",
-      "Bash(wsl bash -c:*)"
+      "Bash(wsl bash -c:*)",
+      "Read(//Users/gecko/src/refinio/one.models/src/api/subApis/**)",
+      "Read(//Users/gecko/src/**)",
+      "Bash(readlink:*)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

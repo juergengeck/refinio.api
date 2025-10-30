@@ -40,8 +40,8 @@
     "test": "jest"
   },
   "dependencies": {
-    "@refinio/one.core": "file:../packages/one.core",
-    "@refinio/one.models": "file:../packages/one.models"
+    "@refinio/one.core": "file:./packages/one.core",
+    "@refinio/one.models": "file:./packages/one.models"
   },
   "optionalDependencies": {
     "@refinio/one.projfs": "file:../one.projfs",

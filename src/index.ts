@@ -3,27 +3,37 @@ import { initInstance, getInstanceIdHash, getInstanceOwnerIdHash, registerRecipe
 import { setBaseDirOrName } from '@refinio/one.core/lib/system/storage-base.js';
 import { getQuicTransport } from '@refinio/one.core/lib/system/quic-transport.js';
 import { createRandomString } from '@refinio/one.core/lib/system/crypto-helpers.js';
-import One from '@refinio/one.models/lib/api/One.js';
+import LeuteModel from '@refinio/one.models/lib/models/Leute/LeuteModel.js';
+import ChannelManager from '@refinio/one.models/lib/models/ChannelManager.js';
+import ConnectionsModel from '@refinio/one.models/lib/models/ConnectionsModel.js';
+import TopicModel from '@refinio/one.models/lib/models/Chat/TopicModel.js';
+import QuestionnaireModel from '@refinio/one.models/lib/models/QuestionnaireModel.js';
+import Notifications from '@refinio/one.models/lib/models/Notifications.js';
+import IoMManager from '@refinio/one.models/lib/models/IoM/IoMManager.js';
+import DocumentModel from '@refinio/one.models/lib/models/DocumentModel.js';
 import { QuicVCServer } from './server/QuicVCServer.js';
+import type { HttpRestServer } from './server/HttpRestServer.js';
 import { InstanceAuthManager } from './auth/InstanceAuthManager.js';
 import { ObjectHandler } from './handlers/ObjectHandler.js';
 import { RecipeHandler } from './handlers/RecipeHandler.js';
 import { ProfileHandler } from './handlers/ProfileHandler.js';
 import { loadConfig } from './config.js';
 import { StateEntryRecipe, AppStateJournalRecipe } from './state/AppStateRecipes.js';
+import type { SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { IFileSystemAdapter } from './filer/IFileSystemAdapter.js';
 
 // Export state management components
 export { AppStateModel, StateEntryRecipe, AppStateJournalRecipe } from './state/index.js';
 export type { StateEntry, AppStateJournal } from './state/index.js';
 
 export async function startApiServer(): Promise<{
-  server: any;
-  httpServer: any;
-  channelManager: any;
-  leuteModel: any;
-  connectionsModel: any;
+  server: QuicVCServer;
+  httpServer: HttpRestServer;
+  channelManager: ChannelManager;
+  leuteModel: LeuteModel;
+  connectionsModel: ConnectionsModel;
   instanceIdHash: string;
-  filerAdapter: any;
+  filerAdapter: IFileSystemAdapter | null;
 }> {
   const config = await loadConfig();
 
@@ -105,78 +115,92 @@ export async function startApiServer(): Promise<{
   // Create auth manager
   const authManager = new InstanceAuthManager();
 
-  // Initialize models directly (like Replicant does)
-  const {
-    LeuteModel,
-    ChannelManager,
-    ConnectionsModel
-  } = await import('@refinio/one.models/lib/models/index.js');
-
-  const { default: TopicModel } = await import('@refinio/one.models/lib/models/Chat/TopicModel.js');
-  const { default: Notifications } = await import('@refinio/one.models/lib/models/Notifications.js');
-  const { default: IoMManager } = await import('@refinio/one.models/lib/models/IoM/IoMManager.js');
-  const { default: JournalModel } = await import('@refinio/one.models/lib/models/JournalModel.js');
-  const { default: QuestionnaireModel } = await import('@refinio/one.models/lib/models/QuestionnaireModel.js');
-
   // Default to public server (can be overridden via config file)
   const commServerUrl = config.instance.commServerUrl || 'wss://comm10.dev.refinio.one';
   console.log(`Using comm server: ${commServerUrl}`);
 
-  const leuteModel = new LeuteModel(commServerUrl, true);
-  const channelManager = new ChannelManager(leuteModel);
-  const topicModel = new TopicModel(channelManager, leuteModel);
-  const notifications = new Notifications(channelManager);
-  const iomManager = new IoMManager(leuteModel, commServerUrl);
-
-  // Create empty JournalModel and QuestionnaireModel for filesystem structure
-  // (not fully initialized, but sufficient for filesystem to work)
-  const journalModel = null as any;  // JournalFileSystem will handle gracefully
-  const questionnaireModel = new QuestionnaireModel(channelManager);
-
   // If we're mounting a filesystem (creating invites), we need to accept incoming connections
   const isServer = !!config.filer?.mountPoint;
 
+  // Initialize all required models (order matters - dependencies must be created first)
+  const leuteModel = new LeuteModel(commServerUrl, true);
+  await leuteModel.init();
+
+  const channelManager = new ChannelManager(leuteModel);
+  await channelManager.init();
+
+  const topicModel = new TopicModel(channelManager, leuteModel);
+  await topicModel.init();
+
+  const notifications = new Notifications(channelManager);
+  // Notifications doesn't have an init() method
+
+  const iomManager = new IoMManager(leuteModel, commServerUrl);
+  await iomManager.init();
+
+  const questionnaireModel = new QuestionnaireModel(channelManager);
+  await questionnaireModel.init();
+
+  const documentModel = new DocumentModel(channelManager);
+  await documentModel.init();
+
   const connectionsModel = new ConnectionsModel(leuteModel, {
     commServerUrl: commServerUrl,
-    acceptIncomingConnections: isServer,  // Accept connections when we create invites
-    acceptUnknownInstances: false,  // Don't accept unknown instances
-    acceptUnknownPersons: false,  // Don't accept unknown persons
-    allowPairing: true,  // REQUIRED for both creating and accepting invitations
+    acceptIncomingConnections: isServer,      // Accept connections when we create invites
+    acceptUnknownInstances: false,            // Don't accept unknown instances
+    acceptUnknownPersons: false,              // Don't accept unknown persons
+    allowPairing: true,                       // REQUIRED for both creating and accepting invitations
     allowDebugRequests: false,
-    pairingTokenExpirationDuration: 3600000,
-    establishOutgoingConnections: true,  // Both server and client can make outgoing connections
+    pairingTokenExpirationDuration: 3600000,  // 1 hour token validity
+    establishOutgoingConnections: true,       // Both server and client can make outgoing connections
     noImport: false,
     noExport: false
   });
-
-  await leuteModel.init();
-  console.log('✅ LeuteModel initialized');
-  await channelManager.init();
-  console.log('✅ ChannelManager initialized');
   await connectionsModel.init();
-  console.log('✅ ConnectionsModel initialized - listening on CommServer:', commServerUrl);
-  await topicModel.init();
-  console.log('✅ TopicModel initialized');
-  await questionnaireModel.init();
-  console.log('✅ QuestionnaireModel initialized');
+
+  console.log('✅ All models initialized');
+  console.log('  - LeuteModel');
+  console.log('  - ChannelManager');
+  console.log('  - ConnectionsModel (listening on CommServer:', commServerUrl + ')');
+  console.log('  - TopicModel');
+  console.log('  - QuestionnaireModel');
+  console.log('  - Notifications');
+  console.log('  - IoMManager');
+  console.log('  - DocumentModel');
+
+  // Create models object for compatibility
+  const models = {
+    leuteModel,
+    channelManager,
+    connectionsModel,
+    topicModel,
+    notifications,
+    iomManager,
+    questionnaireModel,
+    documentModel
+  };
+
+  // Create null JournalModel for filesystem structure
+  // (JournalFileSystem will handle gracefully)
+  const journalModel = null as any;
 
   // Register global pairing success handler for both incoming and outgoing connections
   // This ensures both SERVER (invite creator) and CLIENT (invite acceptor) create contacts
   const { handleNewConnection } = await import('./helpers/ContactCreationHelper.js');
   const { grantAccessRightsAfterPairing } = await import('./helpers/AccessRightsHelper.js');
 
-  connectionsModel.pairing.onPairingSuccess(
-    async (initiatedLocally, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, token) => {
+  models.connectionsModel.pairing.onPairingSuccess(
+    async (initiatedLocally: boolean, localPersonId: SHA256IdHash, localInstanceId: SHA256IdHash, remotePersonId: SHA256IdHash, remoteInstanceId: SHA256IdHash, token: string) => {
       console.log(`[PAIRING] Pairing success - initiated locally: ${initiatedLocally}`);
       console.log(`[PAIRING] Remote person: ${remotePersonId}`);
 
       try {
         // Create contact for remote person
-        await handleNewConnection(remotePersonId, leuteModel);
+        await handleNewConnection(remotePersonId, models.leuteModel);
         console.log('[PAIRING] Contact created successfully');
 
         // Grant access rights for CHUM sync
-        await grantAccessRightsAfterPairing(remotePersonId, leuteModel, channelManager);
+        await grantAccessRightsAfterPairing(remotePersonId, models.leuteModel, models.channelManager);
         console.log('[PAIRING] Access rights granted');
       } catch (error) {
         console.error('[PAIRING] Failed to create contact or grant access:', error);
@@ -185,11 +209,11 @@ export async function startApiServer(): Promise<{
   );
 
   // Initialize handlers with the appropriate models
-  const objectHandler = new ObjectHandler(channelManager);
+  const objectHandler = new ObjectHandler(models.channelManager);
   const recipeHandler = new RecipeHandler();
-  const profileHandler = new ProfileHandler(leuteModel, authManager);
+  const profileHandler = new ProfileHandler(models.leuteModel, authManager);
   const { ConnectionHandler } = await import('./handlers/ConnectionHandler.js');
-  const connectionHandler = new ConnectionHandler(leuteModel, connectionsModel, channelManager);
+  const connectionHandler = new ConnectionHandler(models.leuteModel, models.connectionsModel, models.channelManager);
 
   // Create QUICVC server using one.core's transport
   const server = new QuicVCServer({
@@ -215,13 +239,13 @@ export async function startApiServer(): Promise<{
   // Use next port to avoid conflict with QuicVCServer
   const httpPort = config.server.port + 1;
   const { HttpRestServer } = await import('./server/HttpRestServer.js');
-  const httpServer = new HttpRestServer(connectionHandler, leuteModel, httpPort);
+  const httpServer = new HttpRestServer(connectionHandler, models.leuteModel, httpPort);
   await httpServer.start();
 
   console.log(`HTTP REST API listening on port ${httpPort}`);
 
   // Optionally mount filesystem
-  let filerAdapter = null;
+  let filerAdapter: IFileSystemAdapter | null = null;
   if (config.filer?.mountPoint) {
     console.log(`Mounting filesystem at ${config.filer.mountPoint}...`);
 
@@ -233,14 +257,14 @@ export async function startApiServer(): Promise<{
       // Create complete filer with all filesystems
       const inviteUrlPrefix = config.filer.inviteUrlPrefix || 'https://one.refinio.net/invite';
       const fileSystem = await createCompleteFiler({
-        leuteModel,
-        topicModel,
-        channelManager,
-        connectionsModel,
-        notifications,
-        iomManager,
+        leuteModel: models.leuteModel,
+        topicModel: models.topicModel,
+        channelManager: models.channelManager,
+        connectionsModel: models.connectionsModel,
+        notifications: models.notifications,
+        iomManager: models.iomManager,
         journalModel,
-        questionnaireModel,
+        questionnaireModel: models.questionnaireModel,
         commServerUrl,
         inviteUrlPrefix
       });
@@ -274,7 +298,15 @@ export async function startApiServer(): Promise<{
     process.exit(0);
   });
 
-  return { server, httpServer, channelManager, leuteModel, connectionsModel, instanceIdHash, filerAdapter };
+  return {
+    server,
+    httpServer,
+    channelManager: models.channelManager,
+    leuteModel: models.leuteModel,
+    connectionsModel: models.connectionsModel,
+    instanceIdHash,
+    filerAdapter
+  };
 }
 
 import { fileURLToPath } from 'url';
