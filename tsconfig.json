@@ -17,5 +17,5 @@
     "types": ["node"]
   },
   "include": ["@OneObjectInterfaces.d.ts", "src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "src/client/usage-example.ts", "src/examples/**", "src/servers/mcp-stdio-server.ts"]
 }
