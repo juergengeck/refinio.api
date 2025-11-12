@@ -31,7 +31,9 @@
       "Read(//Users/gecko/src/refinio/one.models/src/api/subApis/**)",
       "Read(//Users/gecko/src/**)",
       "Bash(readlink:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
