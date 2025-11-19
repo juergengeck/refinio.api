@@ -24,7 +24,8 @@
     "src/errors.ts",
     "src/plan-system-index.ts",
     "src/types/**/*.ts",
-    "src/transports/IPCTransportPlan.ts"
+    "src/transports/IPCTransportPlan.ts",
+    "src/StoryFactory.ts"
   ],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }

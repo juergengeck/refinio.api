@@ -3,6 +3,8 @@
  * This creates the ambient module that can be extended by other files
  */
 
+import type { Story, Assembly, Plan } from './src/StoryFactory.js';
+
 declare module '@OneObjectInterfaces' {
     export interface OneCertificateInterfaces {}
 
@@ -12,5 +14,9 @@ declare module '@OneObjectInterfaces' {
 
     export interface OneIdObjectInterfaces {}
 
-    export interface OneVersionedObjectInterfaces {}
+    export interface OneVersionedObjectInterfaces {
+        Story: Story;
+        Assembly: Assembly;
+        Plan: Plan;
+    }
 }

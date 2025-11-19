@@ -63,3 +63,10 @@ export {
   error,
   errorFromException
 } from './types/responses.js';
+
+// Story/Assembly tracking
+export { StoryFactory } from './StoryFactory.js';
+export type {
+  ExecutionMetadata,
+  ExecutionResult
+} from './StoryFactory.js';

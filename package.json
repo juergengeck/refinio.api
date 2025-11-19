@@ -28,6 +28,10 @@
       "types": "./dist/plan-system-index.d.ts",
       "import": "./dist/plan-system-index.js"
     },
+    "./stories": {
+      "types": "./dist/plan-system-index.d.ts",
+      "import": "./dist/plan-system-index.js"
+    },
     "./dist/state/index.js": {
       "types": "./dist/state/index.d.ts",
       "import": "./dist/state/index.js"
