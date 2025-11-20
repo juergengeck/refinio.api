@@ -1,5 +1,5 @@
 {
-  "name": "@refinio/refinio-api",
+  "name": "@refinio/refinio.api",
   "version": "0.1.0",
   "description": "Instance-based API server for ONE platform with QUICVC transport",
   "repository": {
