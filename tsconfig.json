@@ -12,9 +12,9 @@
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node",
+    "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true,
-    "types": ["node"]
+    "types": ["node", "jest"]
   },
   "include": [
     "@OneObjectInterfaces.d.ts",
@@ -25,7 +25,10 @@
     "src/plan-system-index.ts",
     "src/types/**/*.ts",
     "src/transports/IPCTransportPlan.ts",
-    "src/StoryFactory.ts"
+    "src/StoryFactory.ts",
+    "src/StoryFactory.test.ts",
+    "src/PlanObjectManager.ts",
+    "src/recipes/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "exclude": ["node_modules", "dist"]
 }

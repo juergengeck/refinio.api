@@ -172,9 +172,36 @@ export interface ExecutionResult<T> {
  * ```
  */
 export class StoryFactory {
+    private storyCreatedListeners = new Set<(story: Story) => void>();
+
     constructor(
         private storeVersionedObject: <T>(obj: T) => Promise<{ idHash: SHA256IdHash<T>; hash: SHA256Hash<T> }>
     ) {}
+
+    /**
+     * Register a listener that will be called whenever a Story is created.
+     *
+     * This allows external packages (like assembly.core) to react to Story creation.
+     *
+     * @param listener - Function to call with the Story object when it's created
+     * @returns Unsubscribe function to remove the listener
+     */
+    onStoryCreated(listener: (story: Story) => void): () => void {
+        this.storyCreatedListeners.add(listener);
+        return () => this.storyCreatedListeners.delete(listener);
+    }
+
+    /**
+     * Notify all registered listeners that a Story was created.
+     * Called internally whenever any Story is created.
+     *
+     * @param story - The Story object that was created
+     */
+    private notifyStoryCreated(story: Story): void {
+        for (const listener of this.storyCreatedListeners) {
+            listener(story);
+        }
+    }
 
     /**
      * Record execution of a Plan operation, creating Story and Assembly
@@ -225,6 +252,9 @@ export class StoryFactory {
 
             const storyResult = await this.storeVersionedObject(story);
             const storyId = storyResult.idHash;
+
+            // Notify listeners that a Story was created
+            this.notifyStoryCreated(story);
 
             // Create Assembly (Product) linking Demand + Supply
             const assembly: Assembly = {
@@ -286,6 +316,9 @@ export class StoryFactory {
 
             await this.storeVersionedObject(failureStory);
 
+            // Notify listeners that a failure Story was created
+            this.notifyStoryCreated(failureStory);
+
             throw error;
         }
     }
@@ -319,6 +352,10 @@ export class StoryFactory {
         };
 
         const result = await this.storeVersionedObject(story);
+
+        // Notify listeners that a Story was created
+        this.notifyStoryCreated(story);
+
         return result.idHash;
     }
 }
