@@ -253,9 +253,6 @@ export class StoryFactory {
             const storyResult = await this.storeVersionedObject(story);
             const storyId = storyResult.idHash;
 
-            // Notify listeners that a Story was created
-            this.notifyStoryCreated(story);
-
             // Create Assembly (Product) linking Demand + Supply
             const assembly: Assembly = {
                 $type$: 'Assembly',
@@ -281,6 +278,9 @@ export class StoryFactory {
             // Update Story with Assembly reference
             story.product = assemblyId;
             await this.storeVersionedObject(story);
+
+            // Notify listeners that a Story was created (after Assembly exists)
+            this.notifyStoryCreated(story);
 
             return {
                 result,

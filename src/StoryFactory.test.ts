@@ -239,5 +239,42 @@ describe('StoryFactory', () => {
 
             expect(listener).toHaveBeenCalled();
         });
+
+        test('recordExecution listener receives Story with populated product field', async () => {
+            const listener = jest.fn((story: Story) => {
+                // At this point, the Story.product should contain the Assembly idHash
+                expect(story.product).toBeTruthy();
+                expect(story.product).not.toBe('');
+                expect(story.product).toMatch(/^mock-id-hash-/);
+            });
+
+            storyFactory.onStoryCreated(listener);
+
+            const metadata: ExecutionMetadata = {
+                title: 'Test Execution',
+                description: 'Test Description',
+                planId: 'mock-plan-id',
+                owner: 'test-owner',
+                domain: 'test-domain',
+                instanceVersion: 'v1.0.0',
+                supply: {
+                    domain: 'test-domain',
+                    subjects: ['test'],
+                    keywords: ['test']
+                },
+                demand: {
+                    domain: 'test-domain',
+                    keywords: ['test']
+                },
+                matchScore: 1.0
+            };
+
+            await storyFactory.recordExecution(metadata, async () => {
+                return 'test-result';
+            });
+
+            // Verify listener was called
+            expect(listener).toHaveBeenCalledTimes(1);
+        });
     });
 });
