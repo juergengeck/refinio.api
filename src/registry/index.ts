@@ -84,6 +84,6 @@ export function initializeRegistry(deps: HandlerDependencies): HandlerRegistry {
 // Export both PlanRegistry (new) and HandlerRegistry (legacy for LAMA-specific handlers)
 export { PlanRegistry, createPlanRegistry } from './PlanRegistry.js';
 export { HandlerRegistry, createHandlerRegistry } from './HandlerRegistry.js';
-export type { Plan, PlanMetadata, StoryResult, PlanTransaction } from './PlanRegistry.js';
+export type { Plan, PlanMetadata, ExecutionResult, PlanTransaction } from './PlanRegistry.js';
 export type { Handler, HandlerMetadata, CallResult } from './HandlerRegistry.js';
 export { initializeOnePlans } from './initialize-one-handlers.js';

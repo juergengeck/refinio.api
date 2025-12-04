@@ -54,19 +54,17 @@ export interface PlanTransaction {
 }
 
 /**
- * Transaction Result (ONE Story object)
+ * Execution Result
  *
- * Captures Plan + Result after execution
+ * Captures Plan + Product after execution.
+ * This is the transport/API layer representation - NOT a persisted ONE Story.
+ * For persisted audit trail, use StoryFactory to create actual ONE Story objects.
+ *
+ * On error, execute() throws - no error property needed.
  */
-export interface StoryResult<T = any> {
-  success: boolean;
+export interface ExecutionResult<T = any> {
   plan: PlanTransaction; // The executed plan
-  data?: T; // Result data
-  error?: {
-    code: string;
-    message: string;
-    details?: any;
-  };
+  product: T; // The product of execution
   timestamp: number;
   executionTime?: number;
 }
@@ -130,7 +128,7 @@ export class PlanRegistry {
     planName: string,
     methodName: string,
     params?: any
-  ): Promise<StoryResult<T>> {
+  ): Promise<ExecutionResult<T>> {
     const startTime = Date.now();
 
     // Create Plan transaction
@@ -140,64 +138,28 @@ export class PlanRegistry {
       params
     };
 
-    try {
-      const plan = this.plans.get(planName);
-
-      if (!plan) {
-        return {
-          success: false,
-          plan: planTransaction,
-          error: {
-            code: 'PLAN_NOT_FOUND',
-            message: `Plan '${planName}' not found`
-          },
-          timestamp: Date.now(),
-          executionTime: Date.now() - startTime
-        };
-      }
-
-      const method = (plan as any)[methodName];
-
-      if (typeof method !== 'function') {
-        return {
-          success: false,
-          plan: planTransaction,
-          error: {
-            code: 'METHOD_NOT_FOUND',
-            message: `Method '${methodName}' not found on plan '${planName}'`
-          },
-          timestamp: Date.now(),
-          executionTime: Date.now() - startTime
-        };
-      }
-
-      // Evaluate Plan - invoke method
-      const result = Array.isArray(params)
-        ? await method.apply(plan, params)
-        : await method.call(plan, params);
-
-      // Create Story object - Plan + Result
-      return {
-        success: true,
-        plan: planTransaction,
-        data: result,
-        timestamp: Date.now(),
-        executionTime: Date.now() - startTime
-      };
-    } catch (error) {
-      // Create Story object with error
-      return {
-        success: false,
-        plan: planTransaction,
-        error: {
-          code: 'EXECUTION_ERROR',
-          message: error instanceof Error ? error.message : String(error),
-          details: error
-        },
-        timestamp: Date.now(),
-        executionTime: Date.now() - startTime
-      };
+    const plan = this.plans.get(planName);
+    if (!plan) {
+      throw new Error(`Plan '${planName}' not found`);
     }
+
+    const method = (plan as any)[methodName];
+    if (typeof method !== 'function') {
+      throw new Error(`Method '${methodName}' not found on plan '${planName}'`);
+    }
+
+    // Evaluate Plan - invoke method
+    const result = Array.isArray(params)
+      ? await method.apply(plan, params)
+      : await method.call(plan, params);
+
+    // Return ExecutionResult - Plan + Product
+    return {
+      plan: planTransaction,
+      product: result,
+      timestamp: Date.now(),
+      executionTime: Date.now() - startTime
+    };
   }
 
   /**
@@ -269,11 +231,8 @@ export class PlanRegistry {
     return new Proxy({} as T, {
       get(_target, methodName: string) {
         return async (...args: any[]) => {
-          const story = await registry.execute(planName, methodName, args);
-          if (!story.success) {
-            throw new Error(story.error?.message || 'Unknown error');
-          }
-          return story.data;
+          const result = await registry.execute(planName, methodName, args);
+          return result.product;
         };
       }
     });

@@ -1,140 +1,101 @@
 /**
- * StoryFactory - Creates Story and Assembly objects for Plan execution tracking
+ * StoryFactory - Creates Story objects for Plan execution tracking
  *
- * Integrates with assembly.core to provide:
+ * Provides:
  * - Story creation for audit trails
- * - Assembly creation for tracking execution
- * - recordExecution helper for Plans to track their operations
+ * - Notification system for listeners (AssemblyListener creates Assemblies)
+ * - wrapExecution helper for Plans to track their operations
  *
- * This is the bridge between refinio.api Plans and assembly.core's
- * Story/Assembly system.
+ * IMPORTANT: StoryFactory ONLY creates Stories.
+ * AssemblyListener (assembly.core) creates Assemblies when notified.
+ * Story.id = productHash (content-addressed identity).
  */
 
 import type { SHA256IdHash, SHA256Hash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { OneObjectTypes } from '@refinio/one.core/lib/recipes.js';
 
-/**
- * Supply - What is offered/available
- * Matches cube.core Supply interface
- */
-export interface Supply {
-    domain: string;
-    subjects: string[];
-    keywords: string[];
-    ownerId?: string;
-    verifiableCredentials?: Array<{
-        type: string;
-        credentialHash: string;
-        issuer: string;
-        issued: number;
-        expires?: number;
-    }>;
-}
+// Import types from assembly.core - single source of truth
+import type { Assembly, Story, Plan, DemandPattern, SupplyPattern } from '@assembly/core';
 
-/**
- * Demand - What is needed/requested
- * Matches cube.core Demand interface
- */
-export interface Demand {
-    domain: string;
-    keywords: string[];
-    trustLevel?: 'me' | 'trusted' | 'group' | 'public';
-    groupHash?: string;
-}
-
-/**
- * Plan - Reference type for Story
- */
-export interface Plan {
-    $type$: 'Plan';
-    id: string;
-    name: string;
-    description?: string;
-    demandPatterns: Array<{
-        keywords: string[];
-        urgency?: number;
-        criteria?: Record<string, unknown>;
-    }>;
-    supplyPatterns: Array<{
-        keywords: string[];
-        minTrustScore?: number;
-        contextLevel?: number;
-    }>;
-    matchingLogic?: string;
-    minMatchScore?: number;
-    metadata?: Map<string, string>;
-    creator?: string;
-    created: number;
-    modified?: number;
-    status?: string;
-    domain?: string;
-}
-
-/**
- * Assembly - Meta-index tracking how computational results move through network
- * Matches assembly.core Assembly interface
- */
-export interface Assembly {
-    $type$: 'Assembly';
-    storyRef: SHA256IdHash<Story>;
-    supply: Supply;
-    demand: Demand;
-    instanceVersion: string;
-    parent?: string;
-    metadata?: Map<string, string>;
-    matchScore?: number;
-    planRef?: SHA256IdHash<Plan>;
-    owner?: string;
-    domain?: string;
-    created?: number;
-    modified?: number;
-    status?: string;
-}
-
-/**
- * Story - Audit trail documenting what happened when a Plan was executed
- * Matches assembly.core Story interface
- */
-export interface Story {
-    $type$: 'Story';
-    id: string;
-    title: string;
-    description: string;
-    plan: SHA256IdHash<Plan>;
-    product: SHA256IdHash<Assembly>;
-    instanceVersion: string;
-    outcome?: string;
-    success: boolean;
-    matchScore?: number;
-    metadata?: Map<string, string>;
-    actor?: string;
-    created: number;
-    duration?: number;
-    owner?: string;
-    domain?: string;
-}
+// Re-export for consumers
+export type { Assembly, Story, Plan, DemandPattern, SupplyPattern };
 
 /**
  * Metadata for recording execution - passed by Plans
  */
 export interface ExecutionMetadata {
+    /** Title for the Story */
     title: string;
-    description: string;
-    planId: SHA256IdHash<Plan> | string;
-    owner: string;
-    domain: string;
+    /** Plan idHash that was executed */
+    planId: SHA256IdHash<Plan>;
+    /** Plan type name for logging */
+    planTypeName: string;
+    /** Owner person idHash */
+    owner: SHA256IdHash<any>;
+    /** Instance version for tracking */
     instanceVersion: string;
-    supply: Supply;
-    demand: Demand;
-    matchScore?: number;
 }
 
 /**
- * Result of recordExecution
+ * Result returned by operation function in wrapExecution
+ */
+export interface OperationResult<T> {
+    /** The operation result data */
+    result: T;
+    /** The product/entity hash - THIS becomes Assembly.entity */
+    productHash: SHA256Hash<OneObjectTypes>;
+}
+
+/**
+ * Result of wrapExecution
  */
 export interface ExecutionResult<T> {
+    /** The operation result */
     result: T;
-    storyId: SHA256IdHash<Story>;
-    assemblyId: SHA256IdHash<Assembly>;
+    /** Story idHash (may be undefined if no story created) */
+    storyId?: SHA256IdHash<Story>;
+    /** Assembly idHash (may be undefined if no assembly created) */
+    assemblyId?: SHA256IdHash<Assembly>;
+}
+
+/**
+ * Parameters for registering a Plan
+ */
+export interface RegisterPlanParams {
+    id: string;
+    name: string;
+    description?: string;
+    domain?: string;
+    demandPatterns?: DemandPattern[];
+    supplyPatterns?: SupplyPattern[];
+}
+
+/**
+ * Method metadata for auto-wrapping
+ */
+export interface MethodMetadata {
+    /** Property name in result that contains the product hash (entity) */
+    product?: string;
+    /** Title for the Story */
+    title?: string;
+    /** Whether this method should be tracked (default: true) */
+    tracked?: boolean;
+}
+
+/**
+ * Parameters for registerPlanInstance
+ */
+export interface RegisterPlanInstanceParams<T> {
+    /** The instance to wrap */
+    instance: T;
+    /** Plan metadata */
+    plan: RegisterPlanParams;
+    /** Method configurations - key is method name */
+    methods: Record<string, MethodMetadata>;
+    /** Owner person idHash */
+    owner: SHA256IdHash<any>;
+    /** Instance version */
+    instanceVersion: string;
 }
 
 /**
@@ -144,35 +105,29 @@ export interface ExecutionResult<T> {
  * ```typescript
  * const factory = new StoryFactory(storeVersionedObject);
  *
- * const result = await factory.recordExecution(
- *   {
- *     title: 'Add contact',
- *     description: 'Creating contact: Alice',
- *     planId: ContactsPlan.planId,
- *     owner: userId,
- *     domain: 'identity',
- *     instanceVersion: getCurrentInstanceVersion(),
- *     supply: {
- *       domain: 'identity',
- *       keywords: ['profile', 'contact', 'someone'],
- *       ownerId: userId,
- *       subjects: []
- *     },
- *     demand: {
- *       domain: 'identity',
- *       keywords: ['contact-management', 'identity-storage'],
- *       trustLevel: 'me'
- *     },
- *     matchScore: 1.0
- *   },
+ * // Register a Plan (once per plan type)
+ * const planIdHash = await factory.registerPlan({
+ *     id: 'SomeonePlan',
+ *     name: 'Someone Plan',
+ *     description: 'Manages Someone objects',
+ *     domain: 'identity'
+ * });
+ *
+ * // Wrap execution to create Story + Assembly
+ * const result = await factory.wrapExecution(
+ *   { title: 'Create owner', planId: planIdHash, ... },
  *   async () => {
- *     return await addContactInternal(...);
+ *     const someone = await createSomeone(...);
+ *     return {
+ *       result: { success: true },
+ *       productHash: someone.idHash  // This becomes Assembly.entity!
+ *     };
  *   }
  * );
  * ```
  */
 export class StoryFactory {
-    private storyCreatedListeners = new Set<(story: Story) => void>();
+    private storyCreatedListeners = new Set<(story: Story, storyIdHash: SHA256IdHash<Story>) => void>();
 
     constructor(
         private storeVersionedObject: <T>(obj: T) => Promise<{ idHash: SHA256IdHash<T>; hash: SHA256Hash<T> }>
@@ -186,176 +141,177 @@ export class StoryFactory {
      * @param listener - Function to call with the Story object when it's created
      * @returns Unsubscribe function to remove the listener
      */
-    onStoryCreated(listener: (story: Story) => void): () => void {
+    onStoryCreated(listener: (story: Story, storyIdHash: SHA256IdHash<Story>) => void): () => void {
         this.storyCreatedListeners.add(listener);
         return () => this.storyCreatedListeners.delete(listener);
     }
 
     /**
      * Notify all registered listeners that a Story was created.
-     * Called internally whenever any Story is created.
-     *
-     * @param story - The Story object that was created
      */
-    private notifyStoryCreated(story: Story): void {
+    private notifyStoryCreated(story: Story, storyIdHash: SHA256IdHash<Story>): void {
         for (const listener of this.storyCreatedListeners) {
-            listener(story);
+            listener(story, storyIdHash);
         }
     }
 
     /**
-     * Record execution of a Plan operation, creating Story and Assembly
+     * Register a Plan and return its idHash
      *
-     * This wraps the operation execution with Story/Assembly creation:
-     * 1. Execute the operation
-     * 2. Create Story documenting the execution
-     * 3. Create Assembly linking Demand + Supply
-     * 4. Return result + IDs
+     * Plans are versioned objects - calling with same id returns same idHash
+     * (content-addressed deduplication)
+     */
+    async registerPlan(params: RegisterPlanParams): Promise<SHA256IdHash<Plan>> {
+        const plan: Plan = {
+            $type$: 'Plan',
+            id: params.id,
+            name: params.name,
+            description: params.description,
+            demandPatterns: params.demandPatterns || [],
+            supplyPatterns: params.supplyPatterns || [],
+            created: Date.now(),
+            domain: params.domain
+        };
+
+        const result = await this.storeVersionedObject(plan);
+        return result.idHash;
+    }
+
+    /**
+     * Wrap execution of a Plan operation, creating Story and Assembly
      *
-     * @param metadata - Execution metadata (title, description, planId, etc)
-     * @param fn - The operation to execute
+     * IMPORTANT: The operation must return productHash - this becomes Assembly.entity!
+     * Assembly identity is determined by entity (content-addressed).
+     * Same entity = same Assembly idHash = version chain (updates).
+     * Different entity = different Assembly = separate version chain.
+     *
+     * @param metadata - Execution metadata (title, planId, owner, etc)
+     * @param operation - Function that performs the work and returns productHash
      * @returns Result + Story/Assembly IDs
      */
-    async recordExecution<T>(
+    async wrapExecution<T>(
         metadata: ExecutionMetadata,
-        fn: () => Promise<T>
+        operation: () => Promise<OperationResult<T>>
     ): Promise<ExecutionResult<T>> {
         const startTime = Date.now();
 
-        try {
-            // Execute the operation
-            const result = await fn();
-            const duration = Date.now() - startTime;
+        // Execute the operation
+        const opResult = await operation();
+        const duration = Date.now() - startTime;
 
-            // Create Story (immutable audit trail)
-            const story: Story = {
-                $type$: 'Story',
-                id: `story-${metadata.planId}-${startTime}`,
-                title: metadata.title,
-                description: metadata.description,
-                plan: metadata.planId as SHA256IdHash<Plan>,
-                product: '' as SHA256IdHash<Assembly>, // Will be filled after Assembly creation
-                instanceVersion: metadata.instanceVersion,
-                outcome: 'success',
-                success: true,
-                matchScore: metadata.matchScore,
-                metadata: new Map([
-                    ['domain', metadata.domain],
-                    ['owner', metadata.owner]
-                ]),
-                actor: metadata.owner,
-                created: startTime,
-                duration,
-                owner: metadata.owner,
-                domain: metadata.domain
-            };
+        // Create Story (audit trail of what happened)
+        // Story id is the product hash - same product = same Story (content-addressed)
+        const story: Story = {
+            $type$: 'Story',
+            id: opResult.productHash as unknown as string,
+            title: metadata.title,
+            plan: metadata.planId,
+            product: opResult.productHash,
+            instanceVersion: metadata.instanceVersion,
+            created: startTime,
+            duration,
+            owner: metadata.owner
+        };
 
-            const storyResult = await this.storeVersionedObject(story);
-            const storyId = storyResult.idHash;
+        const storyResult = await this.storeVersionedObject(story);
+        const storyIdHash = storyResult.idHash;
 
-            // Create Assembly (Product) linking Demand + Supply
-            const assembly: Assembly = {
-                $type$: 'Assembly',
-                storyRef: storyId,
-                supply: metadata.supply,
-                demand: metadata.demand,
-                instanceVersion: metadata.instanceVersion,
-                metadata: new Map([
-                    ['title', metadata.title],
-                    ['description', metadata.description]
-                ]),
-                matchScore: metadata.matchScore,
-                planRef: metadata.planId as SHA256IdHash<Plan>,
-                owner: metadata.owner,
-                domain: metadata.domain,
-                created: startTime,
-                status: 'completed'
-            };
+        // Notify listeners - AssemblyListener creates Assembly
+        // Assembly.entity = productHash, so assemblyId is deterministic
+        this.notifyStoryCreated(story, storyIdHash);
 
-            const assemblyResult = await this.storeVersionedObject(assembly);
-            const assemblyId = assemblyResult.idHash;
-
-            // Update Story with Assembly reference
-            story.product = assemblyId;
-            await this.storeVersionedObject(story);
-
-            // Notify listeners that a Story was created (after Assembly exists)
-            this.notifyStoryCreated(story);
-
-            return {
-                result,
-                storyId,
-                assemblyId
-            };
-        } catch (error) {
-            const duration = Date.now() - startTime;
-
-            // Create failure Story
-            const failureStory: Story = {
-                $type$: 'Story',
-                id: `story-${metadata.planId}-${startTime}`,
-                title: metadata.title,
-                description: metadata.description,
-                plan: metadata.planId as SHA256IdHash<Plan>,
-                product: '' as SHA256IdHash<Assembly>,
-                instanceVersion: metadata.instanceVersion,
-                outcome: `failure: ${(error as Error).message}`,
-                success: false,
-                matchScore: 0,
-                metadata: new Map([
-                    ['domain', metadata.domain],
-                    ['owner', metadata.owner],
-                    ['error', (error as Error).message]
-                ]),
-                actor: metadata.owner,
-                created: startTime,
-                duration,
-                owner: metadata.owner,
-                domain: metadata.domain
-            };
-
-            await this.storeVersionedObject(failureStory);
-
-            // Notify listeners that a failure Story was created
-            this.notifyStoryCreated(failureStory);
-
-            throw error;
-        }
+        return {
+            result: opResult.result,
+            storyId: storyIdHash,
+            // assemblyId is derived from productHash (Assembly.entity = productHash)
+            // Callers can compute it or listen to AssemblyListener
+            assemblyId: undefined
+        };
     }
 
     /**
-     * Create a Story documenting an event (without Assembly)
+     * Register a Plan instance and wrap its methods for auto Story/Assembly creation
      *
-     * Use this for logging/auditing events that don't need Assembly tracking.
+     * Creates a Proxy that intercepts method calls and automatically creates
+     * Story + Assembly records when tracked methods are called.
+     *
+     * @param params - Configuration for the instance wrapping
+     * @returns The wrapped instance (Proxy)
      */
-    async createStory(
-        planId: SHA256IdHash<Plan> | string,
-        title: string,
-        description: string,
-        instanceVersion: string,
-        success: boolean = true,
-        outcome?: string
-    ): Promise<SHA256IdHash<Story>> {
-        const now = Date.now();
+    async registerPlanInstance<T extends object>(params: RegisterPlanInstanceParams<T>): Promise<T> {
+        // Register the Plan first
+        const planIdHash = await this.registerPlan(params.plan);
 
-        const story: Story = {
-            $type$: 'Story',
-            id: `story-${planId}-${now}`,
-            title,
-            description,
-            plan: planId as SHA256IdHash<Plan>,
-            product: '' as SHA256IdHash<Assembly>, // No Assembly for simple stories
-            instanceVersion,
-            outcome: outcome || (success ? 'success' : 'failure'),
-            success,
-            created: now
-        };
+        const factory = this;
 
-        const result = await this.storeVersionedObject(story);
+        // Create a Proxy that wraps tracked methods
+        return new Proxy(params.instance, {
+            get(target: T, prop: string | symbol, receiver: any): any {
+                const value = Reflect.get(target, prop, receiver);
 
-        // Notify listeners that a Story was created
-        this.notifyStoryCreated(story);
+                // Only wrap functions
+                if (typeof value !== 'function') {
+                    return value;
+                }
 
-        return result.idHash;
+                const methodName = String(prop);
+                const methodConfig = params.methods[methodName];
+
+                // If method is not configured or explicitly not tracked, return original
+                if (!methodConfig || methodConfig.tracked === false) {
+                    return value.bind(target);
+                }
+
+                // Wrap the method to create Story + Assembly
+                return async function(...args: any[]) {
+                    const startTime = Date.now();
+
+                    // Call the original method
+                    const result = await value.apply(target, args);
+                    const duration = Date.now() - startTime;
+
+                    // Check if result indicates a cache hit (no new work done)
+                    // Methods can set _cached: true to skip Story/Assembly creation
+                    if (result && typeof result === 'object' && result._cached === true) {
+                        // Return the actual result without _cached flag
+                        const { _cached, ...cleanResult } = result;
+                        // If result only had productHash + _cached, return just the productHash
+                        const keys = Object.keys(cleanResult);
+                        return keys.length === 1 ? cleanResult[keys[0]] : cleanResult;
+                    }
+
+                    // Extract product hash from result if configured
+                    let productHash: SHA256Hash<any> | undefined;
+                    if (methodConfig.product && result && typeof result === 'object') {
+                        productHash = result[methodConfig.product];
+                    }
+
+                    // Only create Story/Assembly if we have a product hash
+                    if (productHash) {
+                        const title = methodConfig.title || `${params.plan.name}: ${methodName}`;
+
+                        // Create Story - id IS the product (content-addressed)
+                        const story: Story = {
+                            $type$: 'Story',
+                            id: productHash as unknown as string,
+                            title,
+                            plan: planIdHash,
+                            product: productHash,
+                            instanceVersion: params.instanceVersion,
+                            created: startTime,
+                            duration,
+                            owner: params.owner
+                        };
+
+                        const storyResult = await factory.storeVersionedObject(story);
+
+                        // Notify listeners - AssemblyListener creates Assembly
+                        factory.notifyStoryCreated(story, storyResult.idHash);
+                    }
+
+                    return result;
+                };
+            }
+        });
     }
 }

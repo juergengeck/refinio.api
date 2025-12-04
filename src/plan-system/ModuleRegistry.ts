@@ -1,4 +1,11 @@
 import type { Module } from './types';
+import { StoryFactory } from '../StoryFactory.js';
+import type { SHA256IdHash, SHA256Hash } from '@refinio/one.core/lib/util/type-checks.js';
+
+/**
+ * Storage function type for StoryFactory
+ */
+type StoreVersionedObjectFn = <T>(obj: T) => Promise<{ idHash: SHA256IdHash<T>; hash: SHA256Hash<T> }>;
 
 /**
  * Simple internal registry for module dependency management
@@ -57,6 +64,26 @@ export class ModuleRegistry {
   private registry = new SimpleRegistry();
   private modules: Module[] = [];
   private initOrder: Module[] = [];
+  private storyFactory?: StoryFactory;
+
+  /**
+   * Set the storage function used for creating the StoryFactory.
+   * Must be called before initAll() if modules demand StoryFactory.
+   */
+  setStorageFunction(storeVersionedObject: StoreVersionedObjectFn): void {
+    this.storyFactory = new StoryFactory(storeVersionedObject);
+    // Auto-supply StoryFactory to all modules that demand it
+    this.supply('StoryFactory', this.storyFactory);
+    console.log('[ModuleRegistry] StoryFactory created and auto-supplied');
+  }
+
+  /**
+   * Get the registry's StoryFactory instance.
+   * Use this to register onStoryCreated callbacks.
+   */
+  getStoryFactory(): StoryFactory | undefined {
+    return this.storyFactory;
+  }
 
   /**
    * Register a module with its demands and supplies
@@ -110,7 +137,7 @@ export class ModuleRegistry {
       await module.init();
 
       // Then emit supplies so dependent modules can receive initialized services
-      module.emitSupplies(this.registry);
+      module.emitSupplies(this);
     }
 
     console.log('[ModuleRegistry] All modules initialized');

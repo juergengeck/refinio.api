@@ -1,5 +1,5 @@
 {
-  "name": "@refinio/refinio.api",
+  "name": "@refinio/api",
   "version": "0.1.0",
   "description": "Instance-based API server for ONE platform with QUICVC transport",
   "repository": {
@@ -42,6 +42,7 @@
     }
   },
   "scripts": {
+    "prebuild": "rm -rf dist",
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
@@ -51,15 +52,13 @@
     "@refinio/one.core": "*",
     "@refinio/one.models": "*"
   },
-  "optionalDependencies": {
-    "@refinio/one.projfs": "file:../one.projfs",
-    "@refinio/one.fuse3": "file:../one.fuse3"
-  },
   "devDependencies": {
     "@refinio/one.core": "file:../one.core",
     "@refinio/one.models": "file:../one.models",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.10.0",
     "jest": "^29.7.0",
+    "ts-jest": "^29.4.5",
     "typescript": "^5.3.0",
     "ws": "^8.14.2"
   },

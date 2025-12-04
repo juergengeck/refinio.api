@@ -11,7 +11,7 @@
  * - Client receives Story objects
  */
 
-import type { PlanTransaction, StoryResult } from '../registry/PlanRegistry.js';
+import type { PlanTransaction, ExecutionResult } from '../registry/PlanRegistry.js';
 
 export interface ClientConfig {
   baseUrl: string;
@@ -37,7 +37,7 @@ export abstract class OnePlanClient {
     plan: string,
     method: string,
     params?: any
-  ): Promise<StoryResult<T>>;
+  ): Promise<ExecutionResult<T>>;
 
   /**
    * Get available Plans
@@ -69,7 +69,7 @@ export class RestPlanClient extends OnePlanClient {
     plan: string,
     method: string,
     params?: any
-  ): Promise<StoryResult<T>> {
+  ): Promise<ExecutionResult<T>> {
     const url = `${this.config.baseUrl}/api/${plan}/${method}`;
 
     const response = await fetch(url, {
@@ -152,7 +152,7 @@ export class QuicPlanClient extends OnePlanClient {
     plan: string,
     method: string,
     params?: any
-  ): Promise<StoryResult<T>> {
+  ): Promise<ExecutionResult<T>> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       await this.connect();
     }
@@ -194,20 +194,24 @@ export class QuicPlanClient extends OnePlanClient {
         clearTimeout(pending.timeout);
       }
 
-      // Convert QUIC response to Story format
-      const story: StoryResult = {
-        success: response.success,
+      // Handle server errors by rejecting
+      if (!response.success) {
+        pending.reject(new Error(response.error?.message || 'Unknown server error'));
+        return;
+      }
+
+      // Convert QUIC response to ExecutionResult format
+      const result: ExecutionResult = {
         plan: {
           plan: response.handler || response.plan,
           method: response.method,
           params: response.params
         },
-        data: response.data,
-        error: response.error,
+        product: response.data,
         timestamp: Date.now()
       };
 
-      pending.resolve(story);
+      pending.resolve(result);
     } catch (error) {
       console.error('Failed to parse server response:', error);
     }
@@ -226,13 +230,13 @@ export class QuicPlanClient extends OnePlanClient {
 
   async listPlans(): Promise<string[]> {
     // Send discovery request
-    const story = await this.execute('_system', 'listPlans', {});
-    return story.data;
+    const result = await this.execute('_system', 'listPlans', {});
+    return result.product;
   }
 
   async getPlanMetadata(plan: string): Promise<any> {
-    const story = await this.execute('_system', 'getPlanMetadata', { plan });
-    return story.data;
+    const result = await this.execute('_system', 'getPlanMetadata', { plan });
+    return result.product;
   }
 
   async close(): Promise<void> {
@@ -255,11 +259,8 @@ export function createPlanProxy<T extends Record<string, (...args: any[]) => Pro
   return new Proxy({} as T, {
     get(_target, methodName: string) {
       return async (...args: any[]) => {
-        const story = await client.execute(planName, methodName, args);
-        if (!story.success) {
-          throw new Error(story.error?.message || 'Unknown error');
-        }
-        return story.data;
+        const result = await client.execute(planName, methodName, args);
+        return result.product;
       };
     }
   });

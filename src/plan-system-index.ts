@@ -64,9 +64,41 @@ export {
   errorFromException
 } from './types/responses.js';
 
-// Story/Assembly tracking
+// Story tracking
 export { StoryFactory } from './StoryFactory.js';
 export type {
   ExecutionMetadata,
-  ExecutionResult
+  ExecutionResult,
+  OperationResult,
+  RegisterPlanParams,
+  MethodMetadata,
+  RegisterPlanInstanceParams,
+  // Re-exported from assembly.core via StoryFactory
+  Assembly,
+  Story,
+  Plan,
+  DemandPattern,
+  SupplyPattern
 } from './StoryFactory.js';
+
+// Plan object management
+export {
+  PlanObjectManager,
+  globalPlanObjectManager,
+  initializePlanObjectManager,
+  registerStandardPlans
+} from './PlanObjectManager.js';
+export type { PlanObjectManagerDependencies } from './PlanObjectManager.js';
+
+// Module System
+export { ModuleRegistry } from './plan-system/ModuleRegistry.js';
+export type { Module, ModuleMetadata, LifecycleAware } from './plan-system/types.js';
+
+// Recipes - ONE.core object definitions
+// Note: Story type is exported from StoryFactory (re-exported from assembly.core)
+export { StoryRecipe, PlanRecipe, RefinioApiRecipes } from './recipes/index.js';
+
+// Transports
+// NOTE: IPCTransportPlan is electron-only, import directly from './transports/IPCTransportPlan.js'
+// export { IPCTransportPlan } from './transports/IPCTransportPlan.js';
+// export type { IPCTransportConfig } from './transports/IPCTransportPlan.js';
