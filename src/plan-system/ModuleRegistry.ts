@@ -166,6 +166,13 @@ export class ModuleRegistry {
   }
 
   /**
+   * Get a module by name
+   */
+  getModule<T extends Module>(name: string): T | undefined {
+    return this.modules.find(m => m.name === name) as T | undefined;
+  }
+
+  /**
    * Topological sort modules by dependency graph
    */
   private topologicalSort(): Module[] {

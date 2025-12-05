@@ -74,7 +74,11 @@ export interface RegisterPlanParams {
  * Method metadata for auto-wrapping
  */
 export interface MethodMetadata {
-    /** Property name in result that contains the product hash (entity) */
+    /**
+     * How to extract the product hash from the method result:
+     * - undefined: Result IS the product hash directly (SHA256Hash/SHA256IdHash)
+     * - string: Property name to extract from result object (e.g., 'idHash' extracts result.idHash)
+     */
     product?: string;
     /** Title for the Story */
     title?: string;
@@ -200,10 +204,13 @@ export class StoryFactory {
         const duration = Date.now() - startTime;
 
         // Create Story (audit trail of what happened)
-        // Story id is the product hash - same product = same Story (content-addressed)
+        // Story.id = planTypeName.productHash (enables planType filtering + content-addressed identity)
+        const storyId = metadata.planTypeName
+            ? `${metadata.planTypeName}.${opResult.productHash}`
+            : opResult.productHash as unknown as string;
         const story: Story = {
             $type$: 'Story',
-            id: opResult.productHash as unknown as string,
+            id: storyId,
             title: metadata.title,
             plan: metadata.planId,
             product: opResult.productHash,
@@ -265,14 +272,17 @@ export class StoryFactory {
                 // Wrap the method to create Story + Assembly
                 return async function(...args: any[]) {
                     const startTime = Date.now();
+                    console.log(`[StoryFactory.Proxy] 🔵 ${params.plan.name}.${methodName}() called`);
 
                     // Call the original method
                     const result = await value.apply(target, args);
                     const duration = Date.now() - startTime;
+                    console.log(`[StoryFactory.Proxy] 🔵 ${methodName}() returned:`, typeof result, result ? Object.keys(result) : 'null');
 
                     // Check if result indicates a cache hit (no new work done)
                     // Methods can set _cached: true to skip Story/Assembly creation
                     if (result && typeof result === 'object' && result._cached === true) {
+                        console.log(`[StoryFactory.Proxy] ⚪ ${methodName}() CACHE HIT - skipping Story creation`);
                         // Return the actual result without _cached flag
                         const { _cached, ...cleanResult } = result;
                         // If result only had productHash + _cached, return just the productHash
@@ -280,20 +290,30 @@ export class StoryFactory {
                         return keys.length === 1 ? cleanResult[keys[0]] : cleanResult;
                     }
 
-                    // Extract product hash from result if configured
+                    // Extract product hash from result based on config
                     let productHash: SHA256Hash<any> | undefined;
-                    if (methodConfig.product && result && typeof result === 'object') {
-                        productHash = result[methodConfig.product];
+                    if (result) {
+                        if (methodConfig.product) {
+                            // Extract from named property
+                            productHash = result[methodConfig.product];
+                            console.log(`[StoryFactory.Proxy] 🔵 Extracted productHash from '${methodConfig.product}':`, productHash?.toString().substring(0, 16));
+                        } else {
+                            // Result IS the hash directly
+                            productHash = result as SHA256Hash<any>;
+                            console.log(`[StoryFactory.Proxy] 🔵 Result IS productHash:`, productHash.toString().substring(0, 16));
+                        }
                     }
 
                     // Only create Story/Assembly if we have a product hash
                     if (productHash) {
+                        console.log(`[StoryFactory.Proxy] 🟢 Creating Story for ${methodName}()...`);
                         const title = methodConfig.title || `${params.plan.name}: ${methodName}`;
 
-                        // Create Story - id IS the product (content-addressed)
+                        // Create Story - id uses plan.method format for planType filtering
+                        // AssemblyDimension extracts planType using story.id.split('.')[0]
                         const story: Story = {
                             $type$: 'Story',
-                            id: productHash as unknown as string,
+                            id: `${params.plan.id}.${methodName}`,
                             title,
                             plan: planIdHash,
                             product: productHash,
@@ -304,9 +324,17 @@ export class StoryFactory {
                         };
 
                         const storyResult = await factory.storeVersionedObject(story);
+                        console.log(`[StoryFactory.Proxy] 🟢 Story created: ${storyResult.idHash.toString().substring(0, 16)}...`);
 
                         // Notify listeners - AssemblyListener creates Assembly
+                        console.log(`[StoryFactory.Proxy] 🟢 Notifying ${factory.storyCreatedListeners.size} listeners...`);
                         factory.notifyStoryCreated(story, storyResult.idHash);
+
+                        // Return just the product value so callers get the expected type
+                        // (e.g., createAI returns SHA256IdHash<Person>, not an object)
+                        return productHash;
+                    } else {
+                        console.log(`[StoryFactory.Proxy] ⚠️ No productHash extracted - skipping Story creation`);
                     }
 
                     return result;
